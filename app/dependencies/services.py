@@ -1,4 +1,6 @@
 
+from typing import Annotated
+
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,31 +70,31 @@ def get_workflow_service():
 
 
 def get_project_update_service(
-    projects: ProjectRepository = Depends(get_project_repository),
+    projects: Annotated[ProjectRepository, Depends(get_project_repository)],
 ) -> ProjectUpdateService:
     return ProjectUpdateService(projects=projects)
 
 
 def get_chat_update_service(
-    chats: ChatRepository = Depends(get_chat_repository),
+    chats: Annotated[ChatRepository, Depends(get_chat_repository)],
 ) -> ChatUpdateService:
     return ChatUpdateService(chats=chats)
 
 
 def get_workflow_update_service(
-    workflows: WorkflowRepository = Depends(get_workflow_repository),
+    workflows: Annotated[WorkflowRepository, Depends(get_workflow_repository)],
 ) -> WorkflowUpdateService:
     return WorkflowUpdateService(workflows=workflows)
 
 
 def get_workflow_step_update_service(
-    steps: WorkflowStepRepository = Depends(get_workflow_step_repository),
+    steps: Annotated[WorkflowStepRepository, Depends(get_workflow_step_repository)],
 ) -> WorkflowStepUpdateService:
     return WorkflowStepUpdateService(steps=steps)
 
 
 def get_agent_run_update_service(
-    agent_runs: AgentRunRepository = Depends(get_agent_run_repository),
+    agent_runs: Annotated[AgentRunRepository, Depends(get_agent_run_repository)],
 ) -> AgentRunUpdateService:
     return AgentRunUpdateService(agent_runs=agent_runs)
 
@@ -106,22 +108,26 @@ def get_health_service() -> HealthService:
 
 
 async def get_embedding_service(
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmbeddingService:
+    # Provider choices live in the database and must be refreshed before
+    # constructing services that route requests to external model providers.
     await provider_config.load_from_db(db)
     return EmbeddingService()
 
 
 async def get_ai_service(
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AIService:
+    # Keep chat/provider failover behavior aligned with the latest persisted
+    # settings for each request-scoped service instance.
     await provider_config.load_from_db(db)
     return AIService()
 
 
 def get_retrieval_service(
-    retrievals: RetrievalRepository = Depends(get_retrieval_repository),
-    embeddings: EmbeddingService = Depends(get_embedding_service),
+    retrievals: Annotated[RetrievalRepository, Depends(get_retrieval_repository)],
+    embeddings: Annotated[EmbeddingService, Depends(get_embedding_service)],
 ) -> RetrievalService:
     return RetrievalService(
         embedding_service=embeddings,
@@ -134,9 +140,9 @@ def get_rag_prompt_builder() -> RAGPromptBuilder:
 
 
 def get_rag_service(
-    retrieval: RetrievalService = Depends(get_retrieval_service),
-    ai: AIService = Depends(get_ai_service),
-    prompts: RAGPromptBuilder = Depends(get_rag_prompt_builder),
+    retrieval: Annotated[RetrievalService, Depends(get_retrieval_service)],
+    ai: Annotated[AIService, Depends(get_ai_service)],
+    prompts: Annotated[RAGPromptBuilder, Depends(get_rag_prompt_builder)],
 ) -> RAGService:
     return RAGService(
         retrieval_service=retrieval,
@@ -146,13 +152,13 @@ def get_rag_service(
 
 
 def get_workspace_tool_registry(
-    documents: DocumentRepository = Depends(get_document_repository),
-    workflows: WorkflowRepository = Depends(get_workflow_repository),
-    workflow_steps: WorkflowStepRepository = Depends(get_workflow_step_repository),
-    workflow_runs: WorkflowRunRepository = Depends(get_workflow_run_repository),
-    workflow_service: WorkflowService = Depends(get_workflow_service),
-    embedding_service: EmbeddingService = Depends(get_embedding_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    documents: Annotated[DocumentRepository, Depends(get_document_repository)],
+    workflows: Annotated[WorkflowRepository, Depends(get_workflow_repository)],
+    workflow_steps: Annotated[WorkflowStepRepository, Depends(get_workflow_step_repository)],
+    workflow_runs: Annotated[WorkflowRunRepository, Depends(get_workflow_run_repository)],
+    workflow_service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    embedding_service: Annotated[EmbeddingService, Depends(get_embedding_service)],
+    jobs: Annotated[BackgroundJobService, Depends(get_background_job_service)],
 ) -> WorkspaceToolRegistry:
     return WorkspaceToolRegistry(
         documents=documents,
@@ -166,11 +172,11 @@ def get_workspace_tool_registry(
 
 
 def get_agent_service(
-    ai: AIService = Depends(get_ai_service),
-    rag: RAGService = Depends(get_rag_service),
-    documents: DocumentRepository = Depends(get_document_repository),
-    workspace_tools: WorkspaceToolRegistry = Depends(get_workspace_tool_registry),
-    prompts: RAGPromptBuilder = Depends(get_rag_prompt_builder),
+    ai: Annotated[AIService, Depends(get_ai_service)],
+    rag: Annotated[RAGService, Depends(get_rag_service)],
+    documents: Annotated[DocumentRepository, Depends(get_document_repository)],
+    workspace_tools: Annotated[WorkspaceToolRegistry, Depends(get_workspace_tool_registry)],
+    prompts: Annotated[RAGPromptBuilder, Depends(get_rag_prompt_builder)],
 ) -> AgentService:
     return AgentService(
         ai=ai,
@@ -182,10 +188,10 @@ def get_agent_service(
 
 
 def get_chat_service(
-    messages: MessageRepository = Depends(get_message_repository),
-    rag: RAGService = Depends(get_rag_service),
-    ai: AIService = Depends(get_ai_service),
-    agent_service: AgentService = Depends(get_agent_service),
+    messages: Annotated[MessageRepository, Depends(get_message_repository)],
+    rag: Annotated[RAGService, Depends(get_rag_service)],
+    ai: Annotated[AIService, Depends(get_ai_service)],
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
 ) -> ChatService:
     return ChatService(
         messages=messages,
@@ -206,9 +212,9 @@ def get_storage_service() -> StorageService:
 
 
 def get_document_service(
-    storage: StorageService = Depends(get_storage_service),
-    documents: DocumentRepository = Depends(get_document_repository),
-    chunks: DocumentChunkRepository = Depends(get_document_chunk_repository),
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+    documents: Annotated[DocumentRepository, Depends(get_document_repository)],
+    chunks: Annotated[DocumentChunkRepository, Depends(get_document_chunk_repository)],
 ) -> DocumentService:
     return DocumentService(
         storage=storage,
@@ -218,7 +224,7 @@ def get_document_service(
 
 
 def get_embedding_management_service(
-    embedding_service: EmbeddingService = Depends(get_embedding_service),
+    embedding_service: Annotated[EmbeddingService, Depends(get_embedding_service)],
 ) -> EmbeddingManagementService:
     return EmbeddingManagementService(
         embedding_service=embedding_service,

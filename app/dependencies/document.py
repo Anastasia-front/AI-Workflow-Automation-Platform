@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,11 +12,14 @@ from app.repositories import DocumentRepository
 
 async def get_owned_document(
     document_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    documents: DocumentRepository = Depends(
-        get_document_repository,
-    ),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    documents: Annotated[
+        DocumentRepository,
+        Depends(
+            get_document_repository,
+        ),
+    ],
 ):
     document = await documents.get_for_user(
         db,

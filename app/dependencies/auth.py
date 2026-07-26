@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,12 +11,13 @@ from app.repositories import UserRepository
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
-    users: UserRepository = Depends(get_user_repository),
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    users: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> User:
-
     try:
+        # Refresh tokens are also JWTs, so explicitly require an access token
+        # before trusting the subject as the current API user.
         payload = decode_access_token(token)
         if payload.get("typ", "access") != "access":
             raise HTTPException(status_code=401, detail="Invalid token")

@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,10 +12,9 @@ from app.repositories import ChatRepository
 
 async def get_owned_chat(
     chat_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    chats: ChatRepository = Depends(
-        get_chat_repository   )
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    chats: Annotated[ChatRepository, Depends(get_chat_repository)],
 ):
     chat = await chats.get_for_user(
         db,

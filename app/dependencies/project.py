@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,11 +16,9 @@ projects = ProjectRepository()
 
 async def get_owned_project(
     project_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    projects: ProjectRepository = Depends(
-        get_project_repository
-    ),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    projects: Annotated[ProjectRepository, Depends(get_project_repository)],
 ):
     project = await projects.get_for_user(
         db,

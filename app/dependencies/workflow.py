@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,9 +16,9 @@ from app.repositories import (
 
 async def get_owned_workflow(
     workflow_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    workflows: WorkflowRepository = Depends(get_workflow_repository),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    workflows: Annotated[WorkflowRepository, Depends(get_workflow_repository)],
 ):
     workflow = await workflows.get_for_user(
         db,

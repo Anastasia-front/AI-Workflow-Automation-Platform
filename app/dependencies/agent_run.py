@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,11 +14,14 @@ from app.repositories import AgentRunRepository
 
 async def get_owned_agent_run(
     agent_run_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    runs: AgentRunRepository = Depends(
-        get_agent_run_repository,
-    ),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    runs: Annotated[
+        AgentRunRepository,
+        Depends(
+            get_agent_run_repository,
+        ),
+    ],
 ):
     agent_run = await runs.get_for_user(
         db,
