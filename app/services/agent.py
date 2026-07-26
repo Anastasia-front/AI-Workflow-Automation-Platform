@@ -87,8 +87,8 @@ class AgentService:
 
             if not retrieved_chunks:
                 return (
-                    "I cannot access relevant uploaded project documents for this "
-                    "request. They may not be uploaded, processed, indexed, or similar "
+                    "I cannot access relevant uploaded project documents for this ",
+                    "request. They may not be uploaded, processed, indexed, or similar ",
                     "enough to the question for retrieval.",
                     [],
                 )
@@ -560,7 +560,7 @@ class AgentService:
                 ],
                 system_prompt=planner_prompt,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             planned = ""
 
         queries = self._parse_queries(planned, max_queries=max_queries)
@@ -646,9 +646,7 @@ class AgentService:
                 term in filename for term in ("job", "description", "requirement")
             )
 
-            if wants_candidates and is_candidate_doc:
-                relevant.append(document)
-            elif wants_job and is_job_doc:
+            if wants_candidates and is_candidate_doc or wants_job and is_job_doc:
                 relevant.append(document)
 
         return relevant
