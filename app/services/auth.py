@@ -15,7 +15,7 @@ from app.core import (
 from app.models import User
 from app.repositories import UserRepository
 from app.schemas import TokenResponse
-from app.services.exceptions import AuthenticationFailedError
+from app.services.exceptions import AuthenticationFailedError, ResourceConflictError
 
 
 class GoogleAuthError(AuthenticationFailedError):
@@ -84,6 +84,11 @@ class AuthService:
         user_repo: UserRepository | None = None,
     ):
         user_repo = user_repo or UserRepository()
+
+        existing_user = await user_repo.get_by_email(db, email)
+        if existing_user:
+            raise ResourceConflictError("A user with this email already exists")
+
         user = User(
             email=email,
             hashed_password=hash_password(password),
