@@ -12,8 +12,8 @@ This document describes the exact deployment flow used in this project.
 - AWS Region: `eu-central-1`
 - EC2: Ubuntu 22.04
 - ECR repository:
-  `377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend`
-- Public URL: `http://ec2-3-75-228-59.eu-central-1.compute.amazonaws.com/docs`
+  `ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend`
+- Public URL: `http://ec2-x-7xx-xxx-xx.eu-central-1.compute.amazonaws.com/docs`
 
 ---
 
@@ -89,7 +89,7 @@ aws ecr get-login-password --region eu-central-1 \
 | docker login \
 --username AWS \
 --password-stdin \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com
 ```
 
 ---
@@ -123,7 +123,7 @@ Expected:
 
 ```bash
 docker tag ai-platform-backend:latest \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 ---
@@ -132,7 +132,7 @@ docker tag ai-platform-backend:latest \
 
 ```bash
 docker push \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 No EC2 is required for building or pushing.
@@ -144,7 +144,7 @@ No EC2 is required for building or pushing.
 Example alias:
 
 ```bash
-alias ai-platform='ssh -i ~/ssh-keys/ai-platform-key.pem ubuntu@ec2-3-75-228-59.eu-central-1.compute.amazonaws.com'
+alias ai-platform='ssh -i ~/ssh-keys/ai-platform-key.pem ubuntu@ec2-x-7xx-xxx-xx.eu-central-1.compute.amazonaws.com'
 ```
 
 Connect:
@@ -214,7 +214,7 @@ aws ecr get-login-password --region eu-central-1 \
 | docker login \
 --username AWS \
 --password-stdin \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com
 ```
 
 ---
@@ -223,7 +223,7 @@ aws ecr get-login-password --region eu-central-1 \
 
 ```bash
 docker pull \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 ---
@@ -233,7 +233,7 @@ docker pull \
 ```bash
 docker run --rm \
 --env-file .env \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest \
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest \
 alembic upgrade head
 ```
 
@@ -251,7 +251,7 @@ docker run -d \
 --restart unless-stopped \
 -p 80:8000 \
 --env-file .env \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 ---
@@ -279,7 +279,7 @@ curl http://localhost/health
 From Mac:
 
 ```bash
-curl http://ec2-3-75-228-59.eu-central-1.compute.amazonaws.com/health
+curl http://ec2-x-7xx-xxx-xx.eu-central-1.compute.amazonaws.com/health
 ```
 
 Expected:
@@ -290,7 +290,7 @@ Expected:
 
 Swagger:
 
-    http://ec2-3-75-228-59.eu-central-1.compute.amazonaws.com/docs
+    http://ec2-x-7xx-xxx-xx.eu-central-1.compute.amazonaws.com/docs
 
 ---
 
@@ -302,10 +302,10 @@ On Mac:
 docker build --platform linux/amd64 -t ai-platform-backend:latest .
 
 docker tag ai-platform-backend:latest \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 
 docker push \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 On EC2:
@@ -313,10 +313,10 @@ On EC2:
 ```bash
 aws ecr get-login-password --region eu-central-1 \
 | docker login --username AWS --password-stdin \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com
 
 docker pull \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 
 docker stop ai-platform-backend || true
 docker rm ai-platform-backend || true
@@ -326,9 +326,9 @@ docker run -d \
 --restart unless-stopped \
 -p 80:8000 \
 --env-file .env \
-377193654975.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+ACCOUNT_ID.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
 ```
 
 Open:
 
-    http://ec2-3-75-228-59.eu-central-1.compute.amazonaws.com/docs
+    http://ec2-x-7xx-xxx-xx.eu-central-1.compute.amazonaws.com/docs
