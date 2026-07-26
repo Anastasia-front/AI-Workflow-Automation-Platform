@@ -1,6 +1,6 @@
 import json
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import AGENTS
@@ -84,7 +84,7 @@ class ChatService:
 
         if agent is None:
             raise HTTPException(
-                status_code=400,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid agent",
             )
 
@@ -197,7 +197,7 @@ class ChatService:
 
             if agent is None:
                 raise HTTPException(
-                    status_code=400,
+                    status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid agent",
                 )
 
@@ -269,7 +269,7 @@ class ChatService:
                 db,
                 assistant_message,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             yield frame("failed", {"message": "Message failed", "error": str(exc)})
             return
 

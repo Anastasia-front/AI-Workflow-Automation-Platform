@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 
 from app.dependencies import get_document_repository
 from app.enums import DocumentStatus, EmbeddingProvider, EmbeddingStatus
@@ -23,7 +23,7 @@ class FakeAsyncClient:
     async def post(self, *args, **kwargs):
         request = httpx.Request("POST", "https://example.test/embed")
         return httpx.Response(
-            status_code=403,
+            status_code=status.HTTP_400_BAD_REQUEST,
             request=request,
             json={"error": {"message": "API key forbidden"}},
         )
