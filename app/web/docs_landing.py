@@ -1,7 +1,7 @@
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 FRONTEND_URL = "https://ai-automation-platform.com"
@@ -599,7 +599,7 @@ async def docs_landing(request: Request) -> HTMLResponse:
 
 @router.get("/docs", include_in_schema=False)
 async def legacy_docs_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/swagger", status_code=307)
+    return RedirectResponse(url="/swagger", status_code=status.HTTP_302_FOUND)
 
 
 @router.get("/favicon.svg", include_in_schema=False)
