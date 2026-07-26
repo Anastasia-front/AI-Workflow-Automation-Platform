@@ -1,27 +1,25 @@
-from typing import List
+from fastapi import APIRouter, File, UploadFile, status
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core import get_db
 from app.dependencies import (
-    get_background_job_service,
-    get_document_chunk_repository,
-    get_document_repository,
-    get_document_service,
-    get_owned_document,
-    get_owned_project,
+    BackgroundJobServiceDep,
+    DbSessionDep,
+    DocumentChunkRepositoryDep,
+    DocumentRepositoryDep,
+    DocumentServiceDep,
+    OwnedDocumentDep,
+    OwnedProjectDep,
 )
-from app.models import Document, Project
-from app.repositories import DocumentChunkRepository, DocumentRepository
 from app.schemas import (
     DocumentChunkResponse,
     DocumentProcessingResponse,
     DocumentResponse,
 )
-from app.services import BackgroundJobService, DocumentService
 
 router = APIRouter()
+
+# FastAPI treats file uploads as request-body metadata rather than injectable
+# dependencies, so keep this default separate from the dependency aliases.
+UPLOAD_FILE_DEFAULT = File(...)
 
 
 # -------------------------------------------------
@@ -29,12 +27,12 @@ router = APIRouter()
 # -------------------------------------------------
 @router.get(
     "/projects/{project_id}/documents",
-    response_model=List[DocumentResponse],
+    response_model=list[DocumentResponse],
 )
 async def get_documents(
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    documents: DocumentRepository = Depends(get_document_repository),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    documents: DocumentRepositoryDep,
 ):
     return await documents.list_for_project(db, project.id)
 
@@ -48,10 +46,10 @@ async def get_documents(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    service: DocumentService = Depends(get_document_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    service: DocumentServiceDep,
+    file: UploadFile = UPLOAD_FILE_DEFAULT,
 ):
     return await service.upload(
         db,
@@ -69,10 +67,10 @@ async def upload_document(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def process_document(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    service: DocumentService = Depends(get_document_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    service: DocumentServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     return await service.enqueue_processing_response(db, document, jobs)
 
@@ -85,10 +83,10 @@ async def process_document(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def cancel_document_processing(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    service: DocumentService = Depends(get_document_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    service: DocumentServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     return await service.cancel_processing(db, document, jobs)
 
@@ -101,10 +99,10 @@ async def cancel_document_processing(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def retry_document_processing(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    service: DocumentService = Depends(get_document_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    service: DocumentServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     return await service.retry_processing(db, document, jobs)
 
@@ -117,7 +115,7 @@ async def retry_document_processing(
     response_model=DocumentResponse,
 )
 async def get_document(
-    document: Document = Depends(get_owned_document),
+    document: OwnedDocumentDep,
 ):
     return document
 
@@ -127,12 +125,12 @@ async def get_document(
 # -------------------------------------------------
 @router.get(
     "/documents/{document_id}/chunks",
-    response_model=List[DocumentChunkResponse],
+    response_model=list[DocumentChunkResponse],
 )
 async def get_document_chunks(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    chunks: DocumentChunkRepository = Depends(get_document_chunk_repository),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    chunks: DocumentChunkRepositoryDep,
 ):
     return await chunks.list_for_document(
         db,
@@ -148,8 +146,8 @@ async def get_document_chunks(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_document(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    service: DocumentService = Depends(get_document_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    service: DocumentServiceDep,
 ):
     await service.delete(db, document)

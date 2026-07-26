@@ -1,23 +1,18 @@
-from typing import List
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, status
 from starlette.responses import StreamingResponse
 
-from app.core import get_db
 from app.dependencies import (
-    get_chat_service,
-    get_current_user,
-    get_message_repository,
-    get_owned_chat,
+    ChatServiceDep,
+    CurrentUserDep,
+    DbSessionDep,
+    MessageRepositoryDep,
+    OwnedChatDep,
 )
-from app.models import Chat, User
-from app.repositories import MessageRepository
 from app.schemas import (
     MessageCreate,
     MessageResponse,
 )
-from app.services import ChatService
 
 router = APIRouter()
 
@@ -27,14 +22,12 @@ router = APIRouter()
 # -------------------------------------------------
 @router.get(
     "/{chat_id}/messages",
-    response_model=List[MessageResponse],
+    response_model=list[MessageResponse],
 )
 async def get_messages(
-    db: AsyncSession = Depends(get_db),
-    chat: Chat = Depends(get_owned_chat),
-    messages: MessageRepository = Depends(
-        get_message_repository,
-    ),
+    db: DbSessionDep,
+    chat: OwnedChatDep,
+    messages: MessageRepositoryDep,
 ):
     return await messages.list_for_chat(
         db,
@@ -47,15 +40,15 @@ async def get_messages(
 # -------------------------------------------------
 @router.post(
     "/{chat_id}/messages",
-    response_model=List[MessageResponse],
+    response_model=list[MessageResponse],
     status_code=status.HTTP_201_CREATED,
 )
 async def create_message(
     payload: MessageCreate,
-    db: AsyncSession = Depends(get_db),
-    chat: Chat = Depends(get_owned_chat),
-    user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    db: DbSessionDep,
+    chat: OwnedChatDep,
+    user: CurrentUserDep,
+    chat_service: ChatServiceDep,
 ):
     user_msg, assistant_msg = await chat_service.create_message(
         db=db,
@@ -75,10 +68,10 @@ async def create_message(
 )
 async def create_message_stream(
     payload: MessageCreate,
-    db: AsyncSession = Depends(get_db),
-    chat: Chat = Depends(get_owned_chat),
-    user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    db: DbSessionDep,
+    chat: OwnedChatDep,
+    user: CurrentUserDep,
+    chat_service: ChatServiceDep,
 ):
     return StreamingResponse(
         chat_service.create_message_stream(
@@ -105,9 +98,9 @@ async def create_message_stream(
 )
 async def regenerate_message(
     message_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    chat_service: ChatServiceDep,
 ):
     return await chat_service.regenerate_message(
         db=db,

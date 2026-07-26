@@ -1,16 +1,13 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
-from app.core import get_db
-from app.dependencies import get_health_service
-from app.services import HealthService
+from app.dependencies import DbSessionDep, HealthServiceDep
 
 router = APIRouter()
 
 
 @router.get("/health")
 async def health(
-    db: AsyncSession = Depends(get_db),
-    service: HealthService = Depends(get_health_service),
+    db: DbSessionDep,
+    service: HealthServiceDep,
 ):
     return await service.check(db)

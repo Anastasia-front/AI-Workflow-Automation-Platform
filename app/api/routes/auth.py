@@ -1,11 +1,6 @@
+from fastapi import APIRouter, status
 
-from fastapi import APIRouter, Depends, status
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core import get_db
-from app.dependencies import get_current_user
-from app.models import User
+from app.dependencies import CurrentUserDep, DbSessionDep, OAuth2PasswordFormDep
 from app.schemas import (
     GoogleLoginRequest,
     RefreshTokenRequest,
@@ -28,7 +23,7 @@ router = APIRouter()
     )
 async def register(
     payload: RegisterRequest, 
-    db: AsyncSession = Depends(get_db)
+    db: DbSessionDep,
 ):
     user = await AuthService.create_user(db, payload.email, payload.password)
 
@@ -43,8 +38,8 @@ async def register(
 # -------------------------------------------------
 @router.post("/login", response_model=TokenResponse)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
+    form_data: OAuth2PasswordFormDep,
+    db: DbSessionDep,
 ):
     return await AuthService.login(db, form_data.username, form_data.password)
 
@@ -54,7 +49,7 @@ async def login(
 @router.post("/google", response_model=TokenResponse)
 async def google_login(
     payload: GoogleLoginRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DbSessionDep,
 ):
     return await AuthService.google_login(db, payload.credential)
 
@@ -64,7 +59,7 @@ async def google_login(
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
     payload: RefreshTokenRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DbSessionDep,
 ):
     return await AuthService.refresh_token(db, payload.refresh_token)
 
@@ -72,7 +67,7 @@ async def refresh_token(
 # GET CURRENT USER
 # -------------------------------------------------
 @router.get("/me", response_model=UserResponse)
-async def get_me(user: User = Depends(get_current_user)):
+async def get_me(user: CurrentUserDep):
     return UserResponse(
         id=user.id,
         email=user.email,

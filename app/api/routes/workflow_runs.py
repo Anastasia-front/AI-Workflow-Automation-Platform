@@ -1,32 +1,31 @@
 from math import ceil
 
-from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query, status
 
-from app.core.database import get_db
 from app.dependencies import (
-    get_background_job_service,
-    get_current_user,
-    get_owned_workflow_run,
-    get_workflow_event_repository,
-    get_workflow_run_repository,
-    get_workflow_service,
+    BackgroundJobServiceDep,
+    CurrentUserDep,
+    DbSessionDep,
+    OwnedWorkflowRunDep,
+    WorkflowEventRepositoryDep,
+    WorkflowRunRepositoryDep,
+    WorkflowServiceDep,
 )
 from app.enums import WorkflowRunStatus
-from app.models import User, WorkflowRun
-from app.repositories import (
-    WorkflowEventRepository,
-    WorkflowRunRepository,
-)
 from app.schemas import (
     WorkflowEventResponse,
     WorkflowRunBulkDeleteResponse,
     WorkflowRunListResponse,
     WorkflowRunResponse,
 )
-from app.services import BackgroundJobService, WorkflowService
 
 router = APIRouter()
+
+DEFAULT_PAGE = 1
+DEFAULT_PAGE_SIZE = 20
+DEFAULT_STATUS_FILTER = None
+DEFAULT_PROJECT_ID = None
+DEFAULT_STATUS_QUERY = Query(DEFAULT_STATUS_FILTER, alias="status")
 
 
 # -------------------------------------------------
@@ -37,13 +36,13 @@ router = APIRouter()
     response_model=WorkflowRunListResponse,
 )
 async def list_workflow_runs(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status_filter: WorkflowRunStatus | None = Query(None, alias="status"),
-    project_id: int | None = Query(None, ge=1),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    runs: WorkflowRunRepository = Depends(get_workflow_run_repository),
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    runs: WorkflowRunRepositoryDep,
+    page: int = Query(DEFAULT_PAGE, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=100),
+    status_filter: WorkflowRunStatus | None = DEFAULT_STATUS_QUERY,
+    project_id: int | None = Query(DEFAULT_PROJECT_ID, ge=1),
 ):
     total = await runs.count_for_user(
         db=db,
@@ -76,7 +75,7 @@ async def list_workflow_runs(
     response_model=WorkflowRunResponse,
 )
 async def get_workflow_run(
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
+    workflow_run: OwnedWorkflowRunDep,
 ):
     return workflow_run
 
@@ -90,10 +89,10 @@ async def get_workflow_run(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def resume_workflow(
-    db: AsyncSession = Depends(get_db),
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
-    service: WorkflowService = Depends(get_workflow_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    service: WorkflowServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     workflow_run = await service.enqueue_resume(db, workflow_run, jobs)
 
@@ -109,10 +108,10 @@ async def resume_workflow(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def retry_workflow(
-    db: AsyncSession = Depends(get_db),
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
-    service: WorkflowService = Depends(get_workflow_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    service: WorkflowServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     workflow_run = await service.enqueue_retry(db, workflow_run, jobs)
 
@@ -126,10 +125,10 @@ async def retry_workflow(
     response_model=WorkflowRunResponse,
 )
 async def cancel_workflow_run(
-    db: AsyncSession = Depends(get_db),
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
-    service: WorkflowService = Depends(get_workflow_service),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    service: WorkflowServiceDep,
+    jobs: BackgroundJobServiceDep,
 ):
     workflow_run = await service.cancel_run(db, workflow_run, jobs)
     return service.run_response(workflow_run)
@@ -142,10 +141,10 @@ async def cancel_workflow_run(
     response_model=WorkflowRunBulkDeleteResponse,
 )
 async def delete_canceled_workflow_runs(
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    service: WorkflowServiceDep,
     project_id: int | None = Query(None, ge=1),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    service: WorkflowService = Depends(get_workflow_service),
 ):
     deleted = await service.delete_canceled_runs(
         db=db,
@@ -162,12 +161,11 @@ async def delete_canceled_workflow_runs(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_workflow_run(
-    db: AsyncSession = Depends(get_db),
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
-    service: WorkflowService = Depends(get_workflow_service),
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    service: WorkflowServiceDep,
 ):
     await service.delete_run(db, workflow_run)
-    return None
 
 
 # add later:
@@ -193,9 +191,9 @@ async def delete_workflow_run(
     response_model=list[WorkflowEventResponse],
 )
 async def get_workflow_events(
-    db: AsyncSession = Depends(get_db),
-    workflow_run: WorkflowRun = Depends(get_owned_workflow_run),
-    events: WorkflowEventRepository = Depends(get_workflow_event_repository),
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    events: WorkflowEventRepositoryDep,
 ):
 
     return await events.get_for_run(

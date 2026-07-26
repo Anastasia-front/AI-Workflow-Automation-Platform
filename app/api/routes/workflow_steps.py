@@ -1,19 +1,14 @@
-from typing import List
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, status
 
-from app.core import get_db
 from app.dependencies import (
-    get_owned_workflow,
-    get_owned_workflow_step,
-    get_workflow_step_repository,
-    get_workflow_step_update_service,
+    DbSessionDep,
+    OwnedWorkflowDep,
+    OwnedWorkflowStepDep,
+    WorkflowStepRepositoryDep,
+    WorkflowStepUpdateServiceDep,
 )
-from app.models import Workflow, WorkflowStep
-from app.repositories import WorkflowStepRepository
 from app.schemas import WorkflowStepCreate, WorkflowStepResponse
-from app.services import WorkflowStepUpdateService
 
 router = APIRouter()
 
@@ -27,9 +22,9 @@ router = APIRouter()
 )
 async def create_workflow_step(
     payload: WorkflowStepCreate,
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow= Depends(get_owned_workflow),
-    service: WorkflowStepUpdateService = Depends(get_workflow_step_update_service),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    service: WorkflowStepUpdateServiceDep,
 ):
     return await service.create(
         db=db,
@@ -45,7 +40,7 @@ async def create_workflow_step(
     response_model=WorkflowStepResponse
 )
 async def get_step(
-    step: WorkflowStep = Depends(get_owned_workflow_step),
+    step: OwnedWorkflowStepDep,
 ):
     return step
 
@@ -54,14 +49,12 @@ async def get_step(
 # -------------------------------------------------
 @router.get(
     "/workflows/{workflow_id}/steps",
-    response_model=List[WorkflowStepResponse],
+    response_model=list[WorkflowStepResponse],
 )
 async def list_for_workflow(
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow = Depends(get_owned_workflow),
-    steps: WorkflowStepRepository = Depends(
-        get_workflow_step_repository
-    ),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    steps: WorkflowStepRepositoryDep,
 ):
     return await steps.list_for_workflow(
         db, 
@@ -76,8 +69,8 @@ async def list_for_workflow(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_step(
-    db: AsyncSession = Depends(get_db),
-    step: WorkflowStep = Depends(get_owned_workflow_step),
-    service: WorkflowStepUpdateService = Depends(get_workflow_step_update_service),
+    db: DbSessionDep,
+    step: OwnedWorkflowStepDep,
+    service: WorkflowStepUpdateServiceDep,
 ):
     await service.delete(db, step)

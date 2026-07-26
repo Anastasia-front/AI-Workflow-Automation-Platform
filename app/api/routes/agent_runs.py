@@ -1,18 +1,15 @@
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, status
 
-from app.core import get_db
 from app.dependencies import (
-    get_agent_run_update_service,
-    get_owned_agent_run,
-    get_owned_workflow,
+    AgentRunUpdateServiceDep,
+    DbSessionDep,
+    OwnedAgentRunDep,
+    OwnedWorkflowDep,
 )
-from app.models import AgentRun, Workflow
 from app.schemas import (
     AgentRunCreate,
     AgentRunResponse,
 )
-from app.services import AgentRunUpdateService
 
 router = APIRouter()
 
@@ -25,7 +22,7 @@ router = APIRouter()
     response_model=AgentRunResponse,
 )
 async def get_agent_run(
-    agent_run: AgentRun = Depends(get_owned_agent_run),
+    agent_run: OwnedAgentRunDep,
 ):
     return agent_run
 
@@ -40,8 +37,8 @@ async def get_agent_run(
 )
 async def run_agent(
     payload: AgentRunCreate,
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow = Depends(get_owned_workflow),
-    service: AgentRunUpdateService = Depends(get_agent_run_update_service),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    service: AgentRunUpdateServiceDep,
 ):
     return await service.create(db=db, payload=payload, workflow=workflow)

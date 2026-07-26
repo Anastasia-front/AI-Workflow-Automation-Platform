@@ -1,18 +1,14 @@
-from typing import List
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, status
 
-from app.core import get_db
 from app.dependencies import (
-    get_current_user,
-    get_owned_project,
-    get_project_repository,
-    get_project_update_service,
-    get_retrieval_service,
+    CurrentUserDep,
+    DbSessionDep,
+    OwnedProjectDep,
+    ProjectRepositoryDep,
+    ProjectUpdateServiceDep,
+    RetrievalServiceDep,
 )
-from app.models import Project, User
-from app.repositories import ProjectRepository
 from app.schemas import (
     ProjectCreate,
     ProjectResponse,
@@ -20,7 +16,6 @@ from app.schemas import (
     RetrievalRequest,
     RetrievalResponse,
 )
-from app.services import ProjectUpdateService, RetrievalService
 
 router = APIRouter()
 
@@ -34,9 +29,9 @@ router = APIRouter()
 )
 async def create_project(
     payload: ProjectCreate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    service: ProjectUpdateService = Depends(get_project_update_service),
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    service: ProjectUpdateServiceDep,
 ):
     return await service.create(
         db=db,
@@ -49,7 +44,7 @@ async def create_project(
 # -------------------------------------------------
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
-    project: Project = Depends(get_owned_project),
+    project: OwnedProjectDep,
 ):
     return project
 
@@ -60,9 +55,9 @@ async def get_project(
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     payload: ProjectUpdate,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    service: ProjectUpdateService = Depends(get_project_update_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    service: ProjectUpdateServiceDep,
 ):
     return await service.update(
         db=db,
@@ -73,13 +68,11 @@ async def update_project(
 # -------------------------------------------------
 #  GET PROJECTS
 # -------------------------------------------------
-@router.get("/", response_model=List[ProjectResponse])
+@router.get("/", response_model=list[ProjectResponse])
 async def get_projects(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    projects: ProjectRepository = Depends(
-        get_project_repository
-    )
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    projects: ProjectRepositoryDep
 ):
     return await projects.list_for_user(
         db,
@@ -95,10 +88,10 @@ async def get_projects(
 )
 async def retrieve(
     request: RetrievalRequest,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    current_user: User = Depends(get_current_user),
-    retrieval_service: RetrievalService = Depends(get_retrieval_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    current_user: CurrentUserDep,
+    retrieval_service: RetrievalServiceDep,
 ):
     return await retrieval_service.retrieve(
         db=db,
@@ -116,8 +109,8 @@ async def retrieve(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_project(
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    service: ProjectUpdateService = Depends(get_project_update_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    service: ProjectUpdateServiceDep,
 ):
     await service.delete(db, project)

@@ -1,15 +1,12 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, BackgroundTasks, status
 
-from app.core import get_db
 from app.dependencies import (
-    get_background_job_service,
-    get_embedding_job_service,
-    get_owned_document,
-    get_owned_project,
+    BackgroundJobServiceDep,
+    DbSessionDep,
+    EmbeddingJobServiceDep,
+    OwnedDocumentDep,
+    OwnedProjectDep,
 )
-from app.models import Document, Project
-from app.services import BackgroundJobService, EmbeddingJobService
 
 router = APIRouter(tags=["Embeddings"])
 
@@ -22,9 +19,9 @@ router = APIRouter(tags=["Embeddings"])
 )
 async def rebuild_document_embeddings(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.rebuild_document(
         db=db,
@@ -41,9 +38,9 @@ async def rebuild_document_embeddings(
 )
 async def sync_project_embeddings(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.sync_project(
         db=db,
@@ -59,10 +56,10 @@ async def sync_project_embeddings(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def cancel_document_embedding_rebuild(
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    jobs: BackgroundJobServiceDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.cancel_document_rebuild(
         db=db,
@@ -79,9 +76,9 @@ async def cancel_document_embedding_rebuild(
 )
 async def resume_document_embedding_rebuild(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.resume_document_rebuild(
         db=db,
@@ -99,9 +96,9 @@ async def resume_document_embedding_rebuild(
 )
 async def retry_document_embedding_rebuild(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    document: Document = Depends(get_owned_document),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    document: OwnedDocumentDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.retry_document_rebuild(
         db=db,
@@ -118,10 +115,10 @@ async def retry_document_embedding_rebuild(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def cancel_project_embedding_sync(
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    jobs: BackgroundJobServiceDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.cancel_project_sync(
         db=db,
@@ -139,9 +136,9 @@ async def cancel_project_embedding_sync(
 )
 async def resume_project_embedding_sync(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.resume_project_sync(
         db=db,
@@ -159,9 +156,9 @@ async def resume_project_embedding_sync(
 )
 async def retry_project_embedding_sync(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return await embedding_jobs.retry_project_sync(
         db=db,
@@ -174,7 +171,7 @@ async def retry_project_embedding_sync(
 # -------------------------------------------------
 @router.get("/projects/{project_id}/embeddings/sync")
 async def get_project_embedding_sync_status(
-    project: Project = Depends(get_owned_project),
-    embedding_jobs: EmbeddingJobService = Depends(get_embedding_job_service),
+    project: OwnedProjectDep,
+    embedding_jobs: EmbeddingJobServiceDep,
 ):
     return embedding_jobs.project_sync_status(project)

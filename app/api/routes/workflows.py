@@ -1,20 +1,16 @@
-from typing import List
 
-from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Request, status
 from starlette.responses import StreamingResponse
 
-from app.core import get_db
 from app.dependencies import (
-    get_background_job_service,
-    get_owned_project,
-    get_owned_workflow,
-    get_workflow_repository,
-    get_workflow_service,
-    get_workflow_update_service,
+    BackgroundJobServiceDep,
+    DbSessionDep,
+    OwnedProjectDep,
+    OwnedWorkflowDep,
+    WorkflowRepositoryDep,
+    WorkflowServiceDep,
+    WorkflowUpdateServiceDep,
 )
-from app.models import Project, Workflow
-from app.repositories import WorkflowRepository
 from app.schemas import (
     WorkflowCreate,
     WorkflowResponse,
@@ -22,7 +18,6 @@ from app.schemas import (
     WorkflowRunResponse,
     WorkflowUpdate,
 )
-from app.services import BackgroundJobService, WorkflowService, WorkflowUpdateService
 
 router = APIRouter()
 
@@ -37,9 +32,9 @@ router = APIRouter()
 )
 async def create_workflow(
     payload: WorkflowCreate,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    service: WorkflowUpdateService = Depends(get_workflow_update_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    service: WorkflowUpdateServiceDep,
 ):
     return await service.create(db=db, payload=payload, project=project)
 
@@ -52,7 +47,7 @@ async def create_workflow(
     response_model=WorkflowResponse,
 )
 async def get_workflow(
-    workflow: Workflow = Depends(get_owned_workflow),
+    workflow: OwnedWorkflowDep,
 ):
     return workflow
 
@@ -66,9 +61,9 @@ async def get_workflow(
 )
 async def update_workflow(
     payload: WorkflowUpdate,
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow = Depends(get_owned_workflow),
-    service: WorkflowUpdateService = Depends(get_workflow_update_service),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    service: WorkflowUpdateServiceDep,
 ):
     return await service.update(
         db=db,
@@ -82,12 +77,12 @@ async def update_workflow(
 # -------------------------------------------------
 @router.get(
     "/projects/{project_id}/workflows",
-    response_model=List[WorkflowResponse],
+    response_model=list[WorkflowResponse],
 )
 async def get_workflows(
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    workflows: WorkflowRepository = Depends(get_workflow_repository),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    workflows: WorkflowRepositoryDep,
 ):
     return await workflows.list_for_project(
         db,
@@ -103,9 +98,9 @@ async def get_workflows(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_workflow(
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow = Depends(get_owned_workflow),
-    service: WorkflowUpdateService = Depends(get_workflow_update_service),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    service: WorkflowUpdateServiceDep,
 ):
     await service.delete(db, workflow)
 
@@ -120,12 +115,10 @@ async def delete_workflow(
 )
 async def run_workflow(
     payload: WorkflowRunRequest,
-    db: AsyncSession = Depends(get_db),
-    service: WorkflowService = Depends(
-        get_workflow_service,
-    ),
-    workflow: Workflow = Depends(get_owned_workflow),
-    jobs: BackgroundJobService = Depends(get_background_job_service),
+    db: DbSessionDep,
+    service: WorkflowServiceDep,
+    workflow: OwnedWorkflowDep,
+    jobs: BackgroundJobServiceDep,
 ):
     workflow_run = await service.enqueue_run(
         db=db,
@@ -144,9 +137,9 @@ async def run_workflow(
 async def run_workflow_stream(
     request: Request,
     payload: WorkflowRunRequest,
-    db: AsyncSession = Depends(get_db),
-    workflow: Workflow = Depends(get_owned_workflow),
-    service: WorkflowService = Depends(get_workflow_service),
+    db: DbSessionDep,
+    workflow: OwnedWorkflowDep,
+    service: WorkflowServiceDep,
 ):
     return StreamingResponse(
         service.run_workflow_stream_until_disconnected(

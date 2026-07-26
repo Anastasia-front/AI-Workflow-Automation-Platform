@@ -1,20 +1,14 @@
-from typing import List
+from fastapi import APIRouter, status
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core import get_db
 from app.dependencies import (
-    get_chat_repository,
-    get_chat_update_service,
-    get_current_user,
-    get_owned_chat,
-    get_owned_project,
+    ChatRepositoryDep,
+    ChatUpdateServiceDep,
+    CurrentUserDep,
+    DbSessionDep,
+    OwnedChatDep,
+    OwnedProjectDep,
 )
-from app.models import Chat, Project, User
-from app.repositories import ChatRepository
 from app.schemas import ChatCreate, ChatResponse, ChatUpdate
-from app.services import ChatUpdateService
 
 router = APIRouter()
 
@@ -28,9 +22,9 @@ router = APIRouter()
 )
 async def create_chat(
     payload: ChatCreate,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(get_owned_project),
-    service: ChatUpdateService = Depends(get_chat_update_service),
+    db: DbSessionDep,
+    project: OwnedProjectDep,
+    service: ChatUpdateServiceDep,
 ):
     return await service.create(
         db=db,
@@ -46,7 +40,7 @@ async def create_chat(
     response_model=ChatResponse,
 )
 async def get_chat(
-    chat: Chat = Depends(get_owned_chat),
+    chat: OwnedChatDep,
 ):
     return chat
 
@@ -60,9 +54,9 @@ async def get_chat(
 )
 async def update_chat(
     payload: ChatUpdate,
-    db: AsyncSession = Depends(get_db),
-    chat: Chat = Depends(get_owned_chat),
-    service: ChatUpdateService = Depends(get_chat_update_service),
+    db: DbSessionDep,
+    chat: OwnedChatDep,
+    service: ChatUpdateServiceDep,
 ):
     return await service.update(
         db=db,
@@ -75,15 +69,13 @@ async def update_chat(
 # -------------------------------------------------
 @router.get(
     "/projects/{project_id}/chats",
-    response_model=List[ChatResponse],
+    response_model=list[ChatResponse],
 )
 async def get_project_chats(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-    project: Project = Depends(get_owned_project),
-    chats: ChatRepository = Depends(
-        get_chat_repository
-    ),
+    db: DbSessionDep,
+    user: CurrentUserDep,
+    project: OwnedProjectDep,
+    chats: ChatRepositoryDep,
 ):
     return await chats.list_for_project(
         db,
@@ -99,8 +91,8 @@ async def get_project_chats(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_chat(
-    db: AsyncSession = Depends(get_db),
-    chat: Chat = Depends(get_owned_chat),
-    service: ChatUpdateService = Depends(get_chat_update_service),
+    db: DbSessionDep,
+    chat: OwnedChatDep,
+    service: ChatUpdateServiceDep,
 ):
     await service.delete(db, chat)
