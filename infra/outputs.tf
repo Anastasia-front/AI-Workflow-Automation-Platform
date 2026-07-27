@@ -1,5 +1,9 @@
-output "ec2_ip" {
+output "backend_ec2_ip" {
   value = module.ec2.public_ip
+}
+
+output "backend_instance_id" {
+  value = module.ec2.instance_id
 }
 
 output "backend_elastic_ip" {
