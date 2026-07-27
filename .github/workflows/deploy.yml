@@ -78,36 +78,181 @@ jobs:
           SITE_AVAILABLE="/etc/nginx/sites-available/\$NGINX_SITE_NAME"
           SITE_ENABLED="/etc/nginx/sites-enabled/\$NGINX_SITE_NAME"
 
-          install_nginx() {
-            if command -v nginx >/dev/null 2>&1; then
-              return
+          export DEBIAN_FRONTEND=noninteractive
+          export PATH="/usr/local/bin:/usr/bin:/bin:\$PATH"
+
+          run_as_root() {
+            if [ "\$(id -u)" -eq 0 ]; then
+              "\$@"
+            else
+              sudo "\$@"
+            fi
+          }
+
+          docker_cmd() {
+            if [ "\$(id -u)" -eq 0 ]; then
+              docker "\$@"
+            else
+              sudo docker "\$@"
+            fi
+          }
+
+          echo "Remote execution user: \$(id)"
+          echo "PATH=\$PATH"
+
+          install_aws_cli() {
+            echo "Checking for existing AWS CLI installation..."
+            if command -v aws >/dev/null 2>&1; then
+              echo "AWS CLI already installed: \$(aws --version)"
+              return 0
             fi
 
+            echo "AWS CLI not found. Installing (self-heal: bootstrap may not have completed)..."
+
             if command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y nginx
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl unzip ca-certificates
             elif command -v yum >/dev/null 2>&1; then
-              sudo yum install -y nginx
+              run_as_root yum install -y curl unzip ca-certificates
+            else
+              echo "No supported package manager found for installing AWS CLI dependencies" >&2
+              return 1
+            fi
+
+            local arch
+            arch="\$(uname -m)"
+            local aws_arch
+
+            case "\$arch" in
+              x86_64)
+                aws_arch="x86_64"
+                ;;
+              aarch64|arm64)
+                aws_arch="aarch64"
+                ;;
+              *)
+                echo "Unsupported architecture for AWS CLI installation: \$arch" >&2
+                return 1
+                ;;
+            esac
+
+            echo "Detected architecture: \$arch (AWS CLI arch: \$aws_arch)"
+
+            local aws_tmp_dir
+            aws_tmp_dir="\$(mktemp -d)"
+
+            curl --fail --silent --show-error --location \
+              "https://awscli.amazonaws.com/awscli-exe-linux-\${aws_arch}.zip" \
+              --output "\${aws_tmp_dir}/awscliv2.zip"
+
+            unzip -q "\${aws_tmp_dir}/awscliv2.zip" -d "\$aws_tmp_dir"
+            run_as_root "\${aws_tmp_dir}/aws/install" --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin
+
+            rm -rf "\$aws_tmp_dir"
+
+            echo "AWS CLI installed: \$(aws --version)"
+          }
+
+          install_docker() {
+            if command -v docker >/dev/null 2>&1; then
+              echo "Docker CLI already installed: \$(docker --version 2>&1 || true)"
+
+              run_as_root systemctl enable docker || true
+              run_as_root systemctl start docker || true
+
+              if docker_cmd info >/dev/null 2>&1; then
+                echo "Docker daemon is available"
+                return 0
+              fi
+
+              echo "Docker CLI exists but daemon is not ready; attempting repair..."
+            else
+              echo "Docker not found. Installing Docker Engine..."
+            fi
+
+            if ! command -v apt-get >/dev/null 2>&1; then
+              echo "install_docker only supports apt-based Ubuntu hosts" >&2
+              return 1
+            fi
+
+            run_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+            run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              ca-certificates \
+              curl \
+              gnupg
+
+            run_as_root install -m 0755 -d /etc/apt/keyrings
+
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+              | run_as_root gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+
+            run_as_root chmod a+r /etc/apt/keyrings/docker.gpg
+
+            . /etc/os-release
+
+            local docker_arch
+            docker_arch="\$(dpkg --print-architecture)"
+
+            echo \
+              "deb [arch=\${docker_arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \${VERSION_CODENAME} stable" \
+              | run_as_root tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+            run_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+
+            run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              docker-ce \
+              docker-ce-cli \
+              containerd.io \
+              docker-buildx-plugin \
+              docker-compose-plugin
+
+            run_as_root systemctl enable docker
+            run_as_root systemctl restart docker
+
+            docker --version
+            docker_cmd info >/dev/null
+
+            echo "Docker installed and daemon is ready"
+          }
+
+          install_nginx() {
+            if command -v nginx >/dev/null 2>&1; then
+              echo "nginx already installed: \$(nginx -v 2>&1)"
+              return 0
+            fi
+
+            echo "nginx not found. Installing..."
+            if command -v apt-get >/dev/null 2>&1; then
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nginx
+            elif command -v yum >/dev/null 2>&1; then
+              run_as_root yum install -y nginx
             else
               echo "No supported package manager found for installing nginx" >&2
-              exit 1
+              return 1
             fi
+
+            nginx -v
           }
 
           install_jq() {
             if command -v jq >/dev/null 2>&1; then
-              return
+              echo "jq already installed: \$(jq --version)"
+              return 0
             fi
 
+            echo "jq not found. Installing..."
             if command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y jq
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+              run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
             elif command -v yum >/dev/null 2>&1; then
-              sudo yum install -y jq
+              run_as_root yum install -y jq
             else
               echo "No supported package manager found for installing jq" >&2
-              exit 1
+              return 1
             fi
+
+            jq --version
           }
 
           install_secret_file() {
@@ -175,7 +320,7 @@ jobs:
                 echo "\$description is healthy"
                 return 0
               fi
-              docker logs --tail=50 "\$CONTAINER_NAME" || true
+              docker_cmd logs --tail=50 "\$CONTAINER_NAME" || true
               sleep 3
             done
 
@@ -186,18 +331,21 @@ jobs:
           mkdir -p "\$DEPLOY_DIR"
           cd "\$DEPLOY_DIR"
 
+          install_aws_cli
+          install_docker
           install_jq
+          install_nginx
+
           generate_env_file
 
-          PREVIOUS_IMAGE="\$(docker inspect "\$CONTAINER_NAME" --format='{{.Config.Image}}' 2>/dev/null || true)"
+          PREVIOUS_IMAGE="\$(docker_cmd inspect "\$CONTAINER_NAME" --format='{{.Config.Image}}' 2>/dev/null || true)"
           echo "\$PREVIOUS_IMAGE" > previous_image.txt
 
           aws ecr get-login-password --region "\$AWS_REGION" \
-          | docker login --username AWS --password-stdin "\$ECR_REGISTRY"
+          | docker_cmd login --username AWS --password-stdin "\$ECR_REGISTRY"
 
-          docker pull "\$ECR_REGISTRY/\$ECR_REPOSITORY:\$IMAGE_TAG"
+          docker_cmd pull "\$ECR_REGISTRY/\$ECR_REPOSITORY:\$IMAGE_TAG"
 
-          install_nginx
           sudo install -d -m 700 -o root -g root "\$SSL_DIR"
           install_secret_file "\$CERT_PARAMETER" "\$CERT_PATH" 0644 '^-----BEGIN CERTIFICATE-----$'
           install_secret_file "\$KEY_PARAMETER" "\$KEY_PATH" 0600 '^-----BEGIN (RSA |EC )?PRIVATE KEY-----$'
@@ -209,15 +357,15 @@ jobs:
           sudo rm -f /etc/nginx/sites-enabled/default
           sudo nginx -t
 
-          docker run --rm \
+          docker_cmd run --rm \
             --env-file .env \
             "\$ECR_REGISTRY/\$ECR_REPOSITORY:\$IMAGE_TAG" \
             alembic upgrade head
 
-          docker stop "\$CONTAINER_NAME" || true
-          docker rm "\$CONTAINER_NAME" || true
+          docker_cmd stop "\$CONTAINER_NAME" || true
+          docker_cmd rm "\$CONTAINER_NAME" || true
 
-          docker run -d \
+          docker_cmd run -d \
             --name "\$CONTAINER_NAME" \
             --env-file .env \
             -p "\$PORT_MAPPING" \
@@ -225,16 +373,16 @@ jobs:
             "\$ECR_REGISTRY/\$ECR_REPOSITORY:\$IMAGE_TAG"
 
           if ! wait_for "Backend container" "curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8000/health >/dev/null"; then
-            docker ps -a
-            docker logs --tail=100 "\$CONTAINER_NAME" || true
+            docker_cmd ps -a
+            docker_cmd logs --tail=100 "\$CONTAINER_NAME" || true
             FAILED_IMAGE="\$ECR_REGISTRY/\$ECR_REPOSITORY:\$IMAGE_TAG"
-            docker stop "\$CONTAINER_NAME" || true
-            docker rm "\$CONTAINER_NAME" || true
+            docker_cmd stop "\$CONTAINER_NAME" || true
+            docker_cmd rm "\$CONTAINER_NAME" || true
             PREVIOUS_IMAGE="\$(cat previous_image.txt)"
             if [ -n "\$PREVIOUS_IMAGE" ]; then
-              docker run -d --name "\$CONTAINER_NAME" --env-file .env -p "\$PORT_MAPPING" --restart unless-stopped "\$PREVIOUS_IMAGE"
+              docker_cmd run -d --name "\$CONTAINER_NAME" --env-file .env -p "\$PORT_MAPPING" --restart unless-stopped "\$PREVIOUS_IMAGE"
             fi
-            docker image rm "\$FAILED_IMAGE" || true
+            docker_cmd image rm "\$FAILED_IMAGE" || true
             exit 1
           fi
 
@@ -245,7 +393,7 @@ jobs:
           wait_for "Backend internal Nginx HTTP" "curl --fail --silent --show-error --max-time 10 --resolve backend.ai-platform.internal:80:127.0.0.1 http://backend.ai-platform.internal/health >/dev/null"
           wait_for "Backend docs Nginx HTTPS" "curl -k --fail --silent --show-error --max-time 10 --resolve docs.ai-automation-platform.com:443:127.0.0.1 https://docs.ai-automation-platform.com/docs >/dev/null"
 
-          docker image prune -f
+          docker_cmd image prune -f
           REMOTE
 
           jq -n --arg cmd "$(cat /tmp/deploy-backend.sh)" '{commands:[$cmd],executionTimeout:["1800"]}' > /tmp/ssm-backend-parameters.json
@@ -262,10 +410,37 @@ jobs:
 
           echo "Command ID: $COMMAND_ID"
 
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" || true
+          # aws ssm wait command-executed uses a fixed default waiter config
+          # (~100s: 5s delay x 20 attempts), far shorter than our 1800s
+          # executionTimeout, so it can report a false failure while the
+          # command is still legitimately running (e.g. a first-time Docker
+          # install). Poll manually instead, bounded by the real timeout.
+          POLL_INTERVAL=10
+          MAX_WAIT_SECONDS=1800
+          ELAPSED=0
+          while true; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut)
+                break
+                ;;
+            esac
+
+            if [ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "Timed out waiting for command $COMMAND_ID after ${ELAPSED}s (last status: $STATUS)" >&2
+              break
+            fi
+
+            echo "Command $COMMAND_ID status: $STATUS (waited ${ELAPSED}s)..."
+            sleep "$POLL_INTERVAL"
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+          done
 
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
