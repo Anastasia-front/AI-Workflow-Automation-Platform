@@ -1,48 +1,107 @@
 #!/bin/bash
-yum update -y
+set -Eeuo pipefail
 
-yum install -y docker
-service docker start
-usermod -a -G docker ec2-user
+export DEBIAN_FRONTEND=noninteractive
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-yum install -y nginx
+apt-get update
+apt-get upgrade -y
+
+apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  gnupg \
+  unzip \
+  jq \
+  nginx
+
+usermod -a -G docker ubuntu || true
+
 systemctl enable nginx
 systemctl start nginx
 
-# login to ECR (region auto)
-aws ecr get-login-password --region eu-central-1 \
-| docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.eu-central-1.amazonaws.com
+install_aws_cli() {
+  echo "Checking for existing AWS CLI installation..."
 
-# shared network so the api/worker containers can reach redis by name,
-# without redis ever binding a host port (not publicly reachable)
-docker network create ai-platform 2>/dev/null || true
+  if command -v aws >/dev/null 2>&1; then
+    echo "AWS CLI already installed: $(aws --version)"
+    return 0
+  fi
 
-# redis: Celery broker only, internal network, no -p / host port published
-docker run -d \
-  --name redis \
-  --network ai-platform \
-  --restart unless-stopped \
-  redis:7-alpine
+  local arch
+  arch="$(uname -m)"
+  local aws_arch
 
-# pull & run backend (FastAPI web process)
-docker pull <ACCOUNT_ID>.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+  case "$arch" in
+    x86_64)
+      aws_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      aws_arch="aarch64"
+      ;;
+    *)
+      echo "Unsupported architecture for AWS CLI installation: $arch" >&2
+      return 1
+      ;;
+  esac
 
-docker run -d \
-  -p 127.0.0.1:8000:8000 \
-  --name backend \
-  --network ai-platform \
-  --restart unless-stopped \
-  -e CELERY_BROKER_URL=redis://redis:6379/0 \
-  --env-file /etc/ai-platform/backend.env \
-  <ACCOUNT_ID>.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest
+  echo "Detected architecture: $arch (AWS CLI arch: $aws_arch)"
 
-# celery worker: separate process from the FastAPI web container, same
-# image, so long-running jobs survive web-process restarts/deploys
-docker run -d \
-  --name worker \
-  --network ai-platform \
-  --restart unless-stopped \
-  -e CELERY_BROKER_URL=redis://redis:6379/0 \
-  --env-file /etc/ai-platform/backend.env \
-  <ACCOUNT_ID>.dkr.ecr.eu-central-1.amazonaws.com/ai-platform-backend:latest \
-  celery -A app.core.celery_app worker --loglevel=info
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  curl --fail --silent --show-error --location \
+    "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" \
+    --output "${tmp_dir}/awscliv2.zip"
+
+  unzip -q "${tmp_dir}/awscliv2.zip" -d "$tmp_dir"
+  "${tmp_dir}/aws/install" --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin
+
+  rm -rf "$tmp_dir"
+
+  echo "AWS CLI installed: $(aws --version)"
+}
+
+install_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    echo "Docker already installed: $(docker --version)"
+    systemctl enable docker
+    systemctl start docker
+    return 0
+  fi
+
+  echo "Installing Docker Engine from the official Docker APT repository..."
+
+  install -m 0755 -d /etc/apt/keyrings
+
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+
+  chmod a+r /etc/apt/keyrings/docker.gpg
+
+  . /etc/os-release
+
+  local docker_arch
+  docker_arch="$(dpkg --print-architecture)"
+
+  echo \
+    "deb [arch=${docker_arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+    | tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+  apt-get update
+
+  apt-get install -y --no-install-recommends \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-buildx-plugin \
+    docker-compose-plugin
+
+  systemctl enable docker
+  systemctl start docker
+
+  echo "Docker installed: $(docker --version)"
+}
+
+install_aws_cli
+install_docker
