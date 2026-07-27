@@ -122,6 +122,34 @@ Inside psql:
 \dt      -- list tables
 ```
 
+Useful commands:
+
+```
+-- Table structure
+\d users
+
+-- More detailed table structure
+\d+ users
+
+-- First rows
+SELECT * FROM users LIMIT 20;
+
+-- List databases
+\l
+
+-- List roles
+\du
+
+-- Current connection
+\conninfo
+
+-- Quit the pager when you see (END)
+q
+
+-- Disable pager
+\pset pager off
+```
+
 ### 6. Database migrations (Alembic)
 
 Create a new migration:
