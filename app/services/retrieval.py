@@ -26,7 +26,6 @@ class RetrievalService:
         query_embedding = await self.embedding_service.embed_text(query)
 
         rows = await self.repository.search(
-            self,
             db=db,
             project_id=project_id,
             user_id=user_id,
