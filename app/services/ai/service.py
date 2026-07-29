@@ -215,8 +215,6 @@ class AIService:
                         "Provider failed after streaming output started.",
                         status_code=error.status_code,
                     ) from exc
-                if not error.retryable:
-                    raise error from exc
                 failures.append(
                     ProviderFailureSummary(
                         provider=config.provider.value,
