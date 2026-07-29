@@ -2,7 +2,7 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import SIMILARITY_THRESHOLD
+from app.core import MAX_SOURCES, SIMILARITY_THRESHOLD, SOURCE_RELEVANCE_THRESHOLD
 from app.prompts import RAGPromptBuilder
 from app.services.ai import AIService
 from app.services.retrieval import RetrievalService
@@ -92,10 +92,17 @@ class RAGService:
         self,
         chunks,
     ) -> list[dict]:
+        # SIMILARITY_THRESHOLD (applied earlier, in search_project_documents)
+        # decides what's loosely relevant enough to feed the LLM as answer
+        # context. Citing a source to the user is a stricter claim, so only
+        # confidently-relevant chunks are surfaced here.
+        relevant_chunks = [
+            chunk for chunk in chunks if chunk.score <= SOURCE_RELEVANCE_THRESHOLD
+        ]
 
         grouped = defaultdict(list)
 
-        for chunk in chunks:
+        for chunk in relevant_chunks:
             grouped[
                 (
                     chunk.document_id,
@@ -119,10 +126,8 @@ class RAGService:
                 }
             )
 
-        return sorted(
-            sources,
-            key=lambda s: s["best_score"],
-        )
+        sources.sort(key=lambda s: s["best_score"])
+        return sources[:MAX_SOURCES]
 
 
 # The flow is now:
