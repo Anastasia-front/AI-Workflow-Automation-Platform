@@ -38,6 +38,19 @@ ALLOWED_CONTENT_TYPES = {
 
 SIMILARITY_THRESHOLD = 0.55
 
+# Tighter than SIMILARITY_THRESHOLD -- used to decide which retrieved chunks
+# are confident enough to surface as user-facing "Sources", as opposed to
+# SIMILARITY_THRESHOLD which decides what's loosely relevant enough to feed
+# the LLM as context. Cosine distance: lower is a closer match.
+SOURCE_RELEVANCE_THRESHOLD = 0.35
+
+# In a small/homogeneous document corpus, an absolute distance threshold
+# alone isn't enough -- nearly every document ends up with at least one
+# chunk that's "close enough" to any query. Documents are ranked by their
+# single best (closest) chunk match, and only the top MAX_SOURCES are kept,
+# so citations stay meaningful instead of listing most of the project.
+MAX_SOURCES = 3
+
 PASSWORD_RULE_MESSAGE = (
     "Password must be at least 6 characters and include an uppercase letter, "
     "a number, and a special character."
@@ -49,7 +62,6 @@ DOCUMENT_REFERENCE_TERMS = (
     "documents",
     "file",
     "files",
-    "project",
     "contract",
     "contracts",
     "cv",
