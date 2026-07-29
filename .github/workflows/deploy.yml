@@ -392,6 +392,7 @@ jobs:
 
           wait_for "Backend internal Nginx HTTP" "curl --fail --silent --show-error --max-time 10 --resolve backend.ai-platform.internal:80:127.0.0.1 http://backend.ai-platform.internal/health >/dev/null"
           wait_for "Backend docs Nginx HTTPS" "curl -k --fail --silent --show-error --max-time 10 --resolve docs.ai-automation-platform.com:443:127.0.0.1 https://docs.ai-automation-platform.com/docs >/dev/null"
+          wait_for "Backend api Nginx HTTPS" "curl -k --fail --silent --show-error --max-time 10 --resolve api.ai-automation-platform.com:443:127.0.0.1 https://api.ai-automation-platform.com/health >/dev/null"
 
           docker_cmd image prune -f
           REMOTE
