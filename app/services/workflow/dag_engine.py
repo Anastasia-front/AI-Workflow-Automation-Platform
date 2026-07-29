@@ -97,7 +97,7 @@ class DAGEngine:
     # CONDITIONAL EXECUTION
     # =====================================================
 
-    ALLOWED_FUNCTIONS = {
+    ALLOWED_FUNCTIONS = {  # noqa: RUF012
         "len": len,
     }
 
@@ -123,7 +123,7 @@ class DAGEngine:
                 )
             )
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     # =====================================================
@@ -209,8 +209,7 @@ class DAGEngine:
         )
 
         if not steps:
-            await self.runs.complete_empty(db, workflow_run)
-            return ""
+            raise Exception("Workflow has no steps configured.")  # noqa: TRY002
 
         self.validate_dependencies(steps)
         self.detect_cycles(steps)
@@ -240,6 +239,8 @@ class DAGEngine:
             for run in completed_runs
             if run.status == WorkflowRunStatus.COMPLETED
         }
+
+        failed_steps: dict[str, str] = {}
 
         # remove already executed nodes
         for step_id in completed_steps:
@@ -450,12 +451,13 @@ class DAGEngine:
                         completed_steps.add(
                             result["step_id"]
                         )
+                        failed_steps[result["step_id"]] = result["error_message"]
 
                     if not continue_on_error:
 
                         await self.runs.fail_committed(db, workflow_run)
 
-                        raise Exception(
+                        raise Exception(  # noqa: TRY002
                             f"Step failed: {result['step_id']}"
                         )
 
@@ -467,12 +469,21 @@ class DAGEngine:
         final_outputs = [
             completed_outputs[step_id]
             for step_id in terminal_steps
-            if step_id in completed_outputs
-            and completed_outputs[step_id]
+            if completed_outputs.get(step_id)
         ]
 
         final_output = "\n\n".join(
             final_outputs
         )
+
+        if not final_output and any(
+            step_id in failed_steps for step_id in terminal_steps
+        ):
+            errors = "; ".join(
+                f"{step_id}: {failed_steps[step_id]}"
+                for step_id in terminal_steps
+                if step_id in failed_steps
+            )
+            raise Exception(f"All terminal steps failed: {errors}")  # noqa: TRY002
 
         return final_output
