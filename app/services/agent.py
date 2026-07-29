@@ -199,7 +199,7 @@ class AgentService:
                 "`run workflow Extract invoice fields on invoice.pdf`."
             )
 
-        if "run workflow" in normalized:
+        if "run" in normalized and "workflow" in normalized:
             workflows = await self.workspace_tools.list_workflows(
                 db, project_id=project_id
             )
@@ -434,7 +434,21 @@ class AgentService:
                 "step_order": 1,
                 "name": "Analyze input",
                 "prompt_template": self._workflow_prompt_from_question(question),
-            }
+            },
+            {
+                "step_order": 2,
+                "name": "Structure output",
+                "prompt_template": (
+                    "Structure the analysis below as strict JSON.\n\n"
+                    f"Task: {question}\n\n"
+                    "Previous step output:\n{{dependency_outputs}}\n\n"
+                    "Return a single JSON object with a \"summary\" key (short plain-text "
+                    "summary of the result) plus whatever additional keys best represent "
+                    "the structured result for this task (for example lists of findings, "
+                    "scores, or recommendations). Return JSON only, no surrounding text."
+                ),
+                "depends_on_orders": [1],
+            },
         ]
 
     async def _resolve_workflow_input(
@@ -509,8 +523,16 @@ class AgentService:
         if any(term in normalized for term in DOCUMENT_REFERENCE_TERMS):
             return True
 
+        # Only the user's own recent turns count as thread context -- the
+        # assistant's own replies routinely say "document"/"project" while
+        # answering a general question, which would otherwise keep RAG
+        # switched on for every unrelated follow-up in the conversation.
+        recent_user_messages = [
+            message for message in history if message.get("role") == "user"
+        ][-2:]
         return any(
-            self._has_document_thread_context(message) for message in history[-8:]
+            self._has_document_thread_context(message)
+            for message in recent_user_messages
         )
 
     def _has_document_thread_context(self, message: dict) -> bool:
