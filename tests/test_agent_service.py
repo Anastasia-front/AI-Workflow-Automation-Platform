@@ -376,6 +376,56 @@ async def test_workspace_agent_runs_workflow_with_selected_document_text():
 
 
 @pytest.mark.asyncio
+async def test_workspace_agent_runs_workflow_with_natural_phrasing():
+    # Regression test: "run the workflow ..." (not the literal substring
+    # "run workflow") used to fall through to a plain chat answer instead
+    # of actually executing the workflow.
+    ai = SimpleNamespace(generate_chat_response=AsyncMock())
+    rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
+    documents = SimpleNamespace(
+        list_for_project=AsyncMock(
+            return_value=[
+                SimpleNamespace(id=1, filename="meeting_minutes_mock_large.txt", status=DocumentStatus.INDEXED, text="Meeting notes"),
+            ]
+        )
+    )
+    prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
+    workspace_tools = SimpleNamespace(
+        list_workflows=AsyncMock(
+            return_value=SimpleNamespace(
+                data={"workflows": [{"id": 111, "name": "Workspace generated workflow", "status": "pending"}]}
+            )
+        ),
+        run_workflow=AsyncMock(
+            return_value=SimpleNamespace(data={"run_id": 97, "workflow_id": 111, "task_id": "task-2", "status": "pending"})
+        ),
+    )
+    agent = SimpleNamespace(system_prompt="Workspace agent", workspace=True)
+
+    answer, _ = await AgentService(
+        ai=ai,
+        rag=rag,
+        documents=documents,
+        workspace_tools=workspace_tools,
+        prompts=prompts,
+    ).run(
+        db=AsyncMock(),
+        agent=agent,
+        project_id=10,
+        user_id=7,
+        question=(
+            "run the workflow which has only 2 steps (analyzed input and "
+            "analyze output) and use meeting_minutes_mock_large.txt file for it"
+        ),
+        history=[],
+    )
+
+    assert "meeting_minutes_mock_large.txt" in answer
+    workspace_tools.run_workflow.assert_awaited_once()
+    ai.generate_chat_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_agent_lists_project_document_names_from_database():
     ai = SimpleNamespace(generate_chat_response=AsyncMock())
     rag = SimpleNamespace(
@@ -424,3 +474,57 @@ async def test_agent_lists_project_document_names_from_database():
     documents.list_for_project.assert_awaited_once()
     rag.search_project_documents.assert_not_awaited()
     ai.generate_chat_response.assert_not_awaited()
+
+
+def _agent_service_for_routing():
+    return AgentService(
+        ai=SimpleNamespace(),
+        rag=SimpleNamespace(),
+        documents=SimpleNamespace(),
+        prompts=SimpleNamespace(),
+    )
+
+
+def test_needs_project_documents_ignores_assistant_mentions_of_documents():
+    service = _agent_service_for_routing()
+    history = [
+        {"role": "user", "content": "hi there"},
+        {
+            "role": "assistant",
+            "content": "I can help with project documents and files anytime.",
+        },
+    ]
+
+    assert (
+        service._needs_project_documents("what is the current llm provider?", history)
+        is False
+    )
+
+
+def test_needs_project_documents_true_for_recent_user_document_mention():
+    service = _agent_service_for_routing()
+    history = [
+        {"role": "user", "content": "can you summarize the uploaded contract?"},
+        {"role": "assistant", "content": "Sure, here is a summary..."},
+    ]
+
+    assert (
+        service._needs_project_documents("what does it say about renewal?", history)
+        is True
+    )
+
+
+def test_needs_project_documents_false_beyond_recent_user_window():
+    service = _agent_service_for_routing()
+    history = [
+        {"role": "user", "content": "can you summarize the uploaded contract?"},
+        {"role": "assistant", "content": "Sure, here is a summary..."},
+        {"role": "user", "content": "thanks"},
+        {"role": "assistant", "content": "You're welcome."},
+        {"role": "user", "content": "what is the current llm provider?"},
+    ]
+
+    assert (
+        service._needs_project_documents("and the embedding provider?", history)
+        is False
+    )
