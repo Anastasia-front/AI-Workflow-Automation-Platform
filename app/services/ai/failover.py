@@ -105,7 +105,7 @@ async def run_with_failover(
                     fallback_used=bool(failures),
                     attempts=failures,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 error = classify_provider_error(exc)
                 logger.warning(
                     "provider_request_failed",
@@ -120,7 +120,7 @@ async def run_with_failover(
                 )
 
                 if not error.retryable:
-                    raise error from exc
+                    break
 
                 if isinstance(error, ProviderError) and error.category == "quota":
                     break
