@@ -179,16 +179,6 @@ class WorkflowRunRepository:
         await db.refresh(workflow_run)
         return workflow_run
 
-    async def complete_empty(
-        self,
-        db: AsyncSession,
-        workflow_run: WorkflowRun,
-    ) -> WorkflowRun:
-        workflow_run.status = WorkflowRunStatus.COMPLETED
-        workflow_run.output = ""
-        await db.flush()
-        return workflow_run
-
     async def fail_committed(
         self,
         db: AsyncSession,
