@@ -45,16 +45,16 @@ async def _process_document(document_id: int, task_id: str | None = None) -> Non
 
         try:
             await service.process(db, document)
-        except Exception as exc:
+        except Exception:
+            # DocumentService.process() already marks the document FAILED
+            # and commits that in its own except block (app/services/document.py)
+            # before re-raising here. Repeating that in a second, freshly
+            # opened session was redundant and could itself raise a
+            # SQLAlchemy MissingGreenlet error, which left the document
+            # stuck (e.g. at "processing") instead of ending at FAILED.
+            # Just roll back this session and propagate for Celery's own
+            # logging/retry visibility.
             await db.rollback()
-            async with CelerySessionLocal() as recovery_db:
-                recovery_document = await documents.get_by_id(recovery_db, document_id)
-                if (
-                    recovery_document is not None
-                    and recovery_document.status
-                    not in (DocumentStatus.CANCELLING, DocumentStatus.CANCELLED)
-                ):
-                    await documents.fail_processing(recovery_db, recovery_document, str(exc))
             raise
 
 
