@@ -209,6 +209,11 @@ separate Celery worker process backed by Redis -- not inside the FastAPI
 request. Postgres remains the source of truth for status; Redis is only the
 broker.
 
+The worker must run natively (same host as the API, not in Docker) so it
+resolves `localhost` the same way the API does -- this matters for local
+providers like Ollama at `http://localhost:11434`, which is unreachable from
+inside a container as `localhost` there refers to the container itself.
+
 Start Redis (already included in `docker compose up -d`, see step 4):
 
 ```bash

@@ -47,15 +47,17 @@ async def _run_workflow(run_id: int, task_id: str | None = None) -> None:
         service = _build_service()
         try:
             await service.execute_run(db, workflow_run)
-        except Exception as exc:
+        except Exception:
+            # WorkflowService.execute_run() already marks the run FAILED
+            # and commits that in its own except block
+            # (app/services/workflow/workflow.py) before re-raising here.
+            # Repeating that in a second, freshly opened session was
+            # redundant (see the equivalent documents.py fix -- the same
+            # pattern there crashed with a SQLAlchemy MissingGreenlet
+            # error reading an expired attribute right after rollback).
+            # Just roll back this session and propagate for Celery's own
+            # logging/retry visibility.
             await db.rollback()
-            async with CelerySessionLocal() as recovery_db:
-                recovery_run = await runs.get_by_id(recovery_db, run_id)
-                if (
-                    recovery_run is not None
-                    and recovery_run.status != WorkflowRunStatus.CANCELED
-                ):
-                    await runs.fail_with_error(recovery_db, recovery_run, str(exc))
             raise
 
 
@@ -77,15 +79,12 @@ async def _resume_workflow(run_id: int, task_id: str | None = None) -> None:
         service = _build_service()
         try:
             await service.resume_run(db, workflow_run)
-        except Exception as exc:
+        except Exception:
+            # See the matching comment in _run_workflow() above --
+            # WorkflowService.resume_run() already marks the run FAILED
+            # before re-raising, so the second fail-handling pass here was
+            # redundant.
             await db.rollback()
-            async with CelerySessionLocal() as recovery_db:
-                recovery_run = await runs.get_by_id(recovery_db, run_id)
-                if (
-                    recovery_run is not None
-                    and recovery_run.status != WorkflowRunStatus.CANCELED
-                ):
-                    await runs.fail_with_error(recovery_db, recovery_run, str(exc))
             raise
 
 

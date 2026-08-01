@@ -234,8 +234,15 @@ class DocumentRepository:
         document: Document,
         error: str | None = None,
     ) -> Document:
+        # Callers typically reach this right after a `db.rollback()` (see
+        # DocumentService.process()'s except block), which expires every
+        # attribute on tracked objects, not just on commit. Reading
+        # `document.status` below would otherwise trigger an implicit lazy
+        # reload outside of an awaited call chain, raising
+        # sqlalchemy.exc.MissingGreenlet instead of failing the document
+        # cleanly. Refresh explicitly first so the attribute access is safe.
+        await db.refresh(document)
         if document.status == DocumentStatus.CANCELLED:
-            await db.refresh(document)
             return document
         document.status = DocumentStatus.FAILED
         document.embedding_status = EmbeddingStatus.FAILED
