@@ -93,27 +93,38 @@ class EventBus:
             payload=payload,
         )
 
-        event_name = self.EVENT_ALIASES.get(event_type, event_type)
-        data = {
-            "event": event_name,
-            "event_type": event_type,
-            "run_id": workflow_run_id,
-            "message": payload.get("message") or self._message_for(event_name, payload),
-            "progress": payload.get("progress"),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **payload,
-        }
-        if stored_event.id:
-            data["event_id"] = stored_event.id
-
-        frame = f"event: {event_name}\n" f"data: {json.dumps(data)}\n\n"
+        frame = self.format_frame(
+            workflow_run_id=workflow_run_id,
+            event_type=event_type,
+            payload=payload,
+            event_id=stored_event.id,
+            timestamp=datetime.now(timezone.utc),
+        )
 
         for queue in list(self._subscribers.get(workflow_run_id, ())):
             await queue.put(frame)
 
         return frame
 
-    def _message_for(self, event_name, payload):
+    @classmethod
+    def format_frame(cls, workflow_run_id, event_type, payload, event_id=None, timestamp=None):
+        event_name = cls.EVENT_ALIASES.get(event_type, event_type)
+        data = {
+            "event": event_name,
+            "event_type": event_type,
+            "run_id": workflow_run_id,
+            "message": payload.get("message") or cls._message_for(event_name, payload),
+            "progress": payload.get("progress"),
+            "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
+            **payload,
+        }
+        if event_id:
+            data["event_id"] = event_id
+
+        return f"event: {event_name}\n" f"data: {json.dumps(data)}\n\n"
+
+    @staticmethod
+    def _message_for(event_name, payload):
         step_name = payload.get("step_name") or payload.get("name")
         if event_name == "queued":
             return "Workflow queued"

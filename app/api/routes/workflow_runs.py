@@ -1,6 +1,8 @@
+import asyncio
 from math import ceil
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
+from starlette.responses import StreamingResponse
 
 from app.dependencies import (
     BackgroundJobServiceDep,
@@ -18,6 +20,14 @@ from app.schemas import (
     WorkflowRunListResponse,
     WorkflowRunResponse,
 )
+from app.services.workflow.event_bus import EventBus
+
+STREAM_POLL_INTERVAL_SECONDS = 1
+TERMINAL_RUN_STATUSES = {
+    WorkflowRunStatus.COMPLETED,
+    WorkflowRunStatus.FAILED,
+    WorkflowRunStatus.CANCELED,
+}
 
 router = APIRouter()
 
@@ -207,3 +217,70 @@ async def get_workflow_events(
 
 # Future:
 # GET /workflow_runs/{run_id}/events?limit=100&offset=0
+
+
+async def _tail_run_events(
+    db,
+    workflow_run,
+    events: WorkflowEventRepositoryDep,
+    runs: WorkflowRunRepositoryDep,
+    is_disconnected,
+):
+    last_id = 0
+    for event in await events.get_for_run(db=db, run_id=workflow_run.id):
+        last_id = event.id
+        yield EventBus.format_frame(
+            workflow_run_id=event.workflow_run_id,
+            event_type=event.event_type,
+            payload=event.payload,
+            event_id=event.id,
+            timestamp=event.created_at,
+        )
+
+    status_ = workflow_run.status
+    while status_ not in TERMINAL_RUN_STATUSES:
+        if await is_disconnected():
+            break
+
+        await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+
+        new_events = await events.get_after_id(db=db, run_id=workflow_run.id, after_id=last_id)
+        for event in new_events:
+            last_id = event.id
+            yield EventBus.format_frame(
+                workflow_run_id=event.workflow_run_id,
+                event_type=event.event_type,
+                payload=event.payload,
+                event_id=event.id,
+                timestamp=event.created_at,
+            )
+
+        current_run = await runs.get_by_id(db=db, run_id=workflow_run.id)
+        status_ = current_run.status if current_run else status_
+
+
+# -------------------------------------------------
+#  STREAM WORKFLOW RUN EVENTS (SSE, DB-tailed)
+# -------------------------------------------------
+@router.get("/runs/{run_id}/stream")
+async def stream_workflow_run_events(
+    request: Request,
+    db: DbSessionDep,
+    workflow_run: OwnedWorkflowRunDep,
+    events: WorkflowEventRepositoryDep,
+    runs: WorkflowRunRepositoryDep,
+):
+    return StreamingResponse(
+        _tail_run_events(
+            db=db,
+            workflow_run=workflow_run,
+            events=events,
+            runs=runs,
+            is_disconnected=request.is_disconnected,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

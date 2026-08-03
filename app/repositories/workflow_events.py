@@ -84,3 +84,22 @@ class WorkflowEventRepository:
         )
 
         return result.scalars().all()
+
+    async def get_after_id(
+        self,
+        db: AsyncSession,
+        run_id: int,
+        after_id: int,
+    ):
+        result = await db.execute(
+            select(WorkflowRunEvent)
+            .where(
+                WorkflowRunEvent.workflow_run_id == run_id,
+                WorkflowRunEvent.id > after_id,
+            )
+            .order_by(
+                WorkflowRunEvent.id
+            )
+        )
+
+        return result.scalars().all()
