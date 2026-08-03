@@ -2,6 +2,8 @@
 
 A lightweight FastAPI-based AI workflow automation platform for managing users, projects, chats, documents, workflows, and agent runs.
 
+See [DECISIONS.md](DECISIONS.md) for the architecture decision log.
+
 ## Setup
 
 1. Create and activate the virtual environment:
