@@ -120,7 +120,7 @@ def _docs_sections() -> str:
               <tr><td>Embeddings</td><td>9</td><td>GET, POST</td><td>Bearer token</td><td>Document rebuild and project embedding sync lifecycle.</td></tr>
               <tr><td>Workflows</td><td>7</td><td>DELETE, GET, PATCH, POST</td><td>Bearer token</td><td>Workflow CRUD, queued runs and streamed runs.</td></tr>
               <tr><td>Workflow Steps</td><td>4</td><td>DELETE, GET, POST</td><td>Bearer token</td><td>Create, list, fetch and delete workflow steps.</td></tr>
-              <tr><td>Workflow Runs</td><td>8</td><td>DELETE, GET, POST</td><td>Bearer token</td><td>List, inspect, resume, retry, cancel, delete and read execution events.</td></tr>
+              <tr><td>Workflow Runs</td><td>9</td><td>DELETE, GET, POST</td><td>Bearer token</td><td>List, inspect, resume, retry, cancel, delete, read execution events and stream live progress.</td></tr>
               <tr><td>Agent Runs</td><td>2</td><td>GET, POST</td><td>Bearer token</td><td>Create and fetch agent runs attached to workflows.</td></tr>
               <tr><td>Providers</td><td>6</td><td>GET, PATCH</td><td>Bearer token</td><td>List providers, update defaults and check provider health.</td></tr>
               <tr><td>Health</td><td>1</td><td>GET</td><td>Public</td><td>Service health check.</td></tr>

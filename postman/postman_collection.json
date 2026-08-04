@@ -3928,6 +3928,43 @@
           ]
         },
         {
+          "name": "Stream Workflow Run Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/stream",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "stream"
+              ]
+            },
+            "description": "Streams events for a workflow run as Server-Sent Events. Auth: required. Replays events already stored for the run, then polls the DB (~1s) for new rows until a terminal event (completed/failed/cancelled) or client disconnect. Works for runs executed via the Celery worker, unlike POST /workflows/{workflow_id}/runs/stream.\n\nSuccess: 200 text/event-stream.\nErrors: 401, 404."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is text/event-stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Delete Canceled Workflow Runs",
           "request": {
             "method": "DELETE",

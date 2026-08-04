@@ -86,6 +86,7 @@ curl -X POST http://127.0.0.1:8000/auth/login \
 - ✔️ Fetch run events with `GET /runs/{run_id}/events`.
 - ✔️ Resume a run with `POST /runs/{run_id}/resume` when applicable.
 - ✔️ Test streaming with `POST /workflows/{workflow_id}/runs/stream`.
+- ✔️ Test the run stream with `GET /runs/{run_id}/stream`.
 - ✔️ Delete a test workflow with `DELETE /workflows/{workflow_id}`.
 
 ## File Upload

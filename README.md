@@ -675,6 +675,26 @@ Expected:
                   workflow_done
 ```
 
+5. Test STREAMING an existing run (SSE, DB-tailed)
+
+```
+5.1 Stream events for a run already created (e.g. via /workflows/{workflow_id}/run,
+    including runs executed by the Celery worker)
+
+                  GET /runs/{run_id}/stream
+
+5.2 Use curl to verify SSE
+
+                  curl -N http://localhost:8000/runs/2/stream \
+                  -H "Authorization: Bearer <token>"
+
+5.3 Expected behavior
+
+                  Replays events already stored for the run, then polls the
+                  DB every ~1s for new rows until a terminal event
+                  (completed/failed/cancelled) or client disconnect.
+```
+
 5. Validate FULL PIPELINE CONSISTENCY
 
 ```
