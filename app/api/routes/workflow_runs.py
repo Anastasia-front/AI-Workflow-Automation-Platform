@@ -254,7 +254,13 @@ async def _tail_run_events(
                 event_id=event.id,
                 timestamp=event.created_at,
             )
-
+# Tracked down and fixed the real bug behind "no live streaming": 
+# stale SQLAlchemy identity-map state. The stream generator's workflow_run object 
+# was loaded once at request start and never refreshed, so its .status stayed "pending" forever 
+# from the generator's perspective — the terminal-status check never fired, 
+# and the connection just hung until timeout instead of closing. 
+# Fixed with db.expire_all() before each status re-check in
+        db.expire_all()
         current_run = await runs.get_by_id(db=db, run_id=workflow_run.id)
         status_ = current_run.status if current_run else status_
 
