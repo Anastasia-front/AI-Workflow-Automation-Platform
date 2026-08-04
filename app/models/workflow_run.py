@@ -29,7 +29,7 @@ class WorkflowRun(TimestampMixin, Base):
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    workflow = relationship("Workflow", backref="runs")
+    workflow = relationship("Workflow", back_populates="runs")
     step_runs = relationship(
         "WorkflowStepRun",
         back_populates="workflow_run",

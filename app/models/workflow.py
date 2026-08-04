@@ -48,8 +48,13 @@ class Workflow(TimestampMixin, Base):
     cascade="all, delete-orphan",
     order_by="WorkflowStep.step_order",
 )
+
+    runs = relationship(
+        "WorkflowRun",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 #     Later add:
-# workflow_steps
-# workflow_runs
 # last_run_at
 # run_count
