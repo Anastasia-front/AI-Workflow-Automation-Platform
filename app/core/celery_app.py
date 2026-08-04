@@ -1,6 +1,13 @@
+import logging
+
 from celery import Celery
 
 from app.core.config import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 # Redis is used purely as the Celery broker. PostgreSQL (via the existing
 # SQLAlchemy models/repositories) remains the sole source of truth for job

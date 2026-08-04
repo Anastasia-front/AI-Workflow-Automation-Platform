@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,6 +14,11 @@ from app.services.workflow.recovery import (
     recover_running_workflows,
 )
 from app.web.docs_landing import router as docs_landing_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 @asynccontextmanager
