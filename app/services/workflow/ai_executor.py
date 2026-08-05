@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.models import WorkflowStep
@@ -18,6 +19,7 @@ class AIExecutor:
         dependency_outputs: dict[int, Any],
         max_retries: int,
         continue_on_error: bool,
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ):
 
         prompt = step.prompt_template
@@ -43,17 +45,20 @@ class AIExecutor:
 
             try:
 
-                ai_output = (
-                    await self.ai.generate_chat_response(
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": prompt,
-                            }
-                        ]
-                    )
-                )
+                chunks = []
+                async for chunk in self.ai.stream_chat_response(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        }
+                    ]
+                ):
+                    chunks.append(chunk)
+                    if on_chunk:
+                        await on_chunk(chunk)
 
+                ai_output = "".join(chunks)
                 success = True
 
             except Exception as e:

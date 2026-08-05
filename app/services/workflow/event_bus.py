@@ -3,6 +3,7 @@ from asyncio import Queue
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import ClassVar
 
 from app.core import (
     ENV_SECRET_ASSIGNMENT_RE,
@@ -45,9 +46,12 @@ def redact_secrets(value):
 
 
 class EventBus:
-    _subscribers = defaultdict(set)
+    # Shared per-process subscriber registry -- intentionally class-level so
+    # every EventBus() instance (a fresh one is created per request via DI)
+    # publishes to and reads from the same set of live SSE subscriber queues.
+    _subscribers: ClassVar[defaultdict[int, set]] = defaultdict(set)
 
-    EVENT_ALIASES = {
+    EVENT_ALIASES: ClassVar[dict[str, str]] = {
         "workflow_queued": "queued",
         "workflow_started": "started",
         "workflow_done": "completed",
@@ -136,6 +140,8 @@ class EventBus:
             return f"Completed {step_name}" if step_name else "Step completed"
         if event_name == "step_failed":
             return f"Failed {step_name}" if step_name else "Step failed"
+        if event_name == "partial_output":
+            return payload.get("delta", "")
         if event_name == "completed":
             return "Workflow completed"
         if event_name == "failed":

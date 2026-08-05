@@ -111,7 +111,7 @@ async def _rebuild_document_embeddings(
                     recovery_document.embedding_status = EmbeddingStatus.CANCELLED
                     recovery_document.celery_task_id = None
                     await recovery_db.commit()
-        except Exception as exc:  # noqa: BLE001 - persist failure detail
+        except Exception as exc:
             await db.rollback()
             async with CelerySessionLocal() as recovery_db:
                 recovery_document = await documents.get_by_id(recovery_db, document_id)
@@ -186,7 +186,7 @@ async def _sync_project_embeddings(
                     recovery_project.embedding_sync_status = EmbeddingStatus.CANCELLED
                     recovery_project.embedding_sync_task_id = None
                     await recovery_db.commit()
-        except Exception as exc:  # noqa: BLE001 - persist failure detail
+        except Exception as exc:
             await db.rollback()
             async with CelerySessionLocal() as recovery_db:
                 recovery_project = await projects.get_by_id(recovery_db, project_id)

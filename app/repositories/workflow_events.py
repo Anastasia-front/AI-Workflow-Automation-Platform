@@ -63,7 +63,7 @@ class WorkflowEventRepository:
                 WorkflowRunEvent.workflow_run_id == run_id,
                 Project.user_id == user_id,
             )
-            .order_by(WorkflowRunEvent.created_at)
+            .order_by(WorkflowRunEvent.created_at, WorkflowRunEvent.id)
         )
 
         return result.scalars().all()
@@ -79,7 +79,7 @@ class WorkflowEventRepository:
                 WorkflowRunEvent.workflow_run_id == run_id
             )
             .order_by(
-                WorkflowRunEvent.created_at
+                WorkflowRunEvent.created_at, WorkflowRunEvent.id
             )
         )
 

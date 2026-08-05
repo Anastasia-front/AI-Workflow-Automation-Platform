@@ -25,6 +25,12 @@ class DAGEngine:
         self.steps = WorkflowStepRepository()
         self.step_runs = WorkflowStepRunRepository()
 
+        self._events_lock = asyncio.Lock()
+
+    async def _emit_locked(self, db, run_id, event_type, payload):
+        async with self._events_lock:
+            await self.events.emit(db, run_id, event_type, payload)
+
     # =====================================================
     # CYCLE DETECTION
     # =====================================================
@@ -33,10 +39,7 @@ class DAGEngine:
         steps: list[WorkflowStep],
     ):
 
-        graph = {
-            step.id: set(step.depends_on or [])
-            for step in steps
-        }
+        graph = {step.id: set(step.depends_on or []) for step in steps}
 
         visited = set()
         stack = set()
@@ -44,9 +47,7 @@ class DAGEngine:
         def dfs(node):
 
             if node in stack:
-                raise ValueError(
-                    "Cycle detected in workflow DAG"
-                )
+                raise ValueError("Cycle detected in workflow DAG")
 
             if node in visited:
                 return
@@ -66,23 +67,14 @@ class DAGEngine:
         self,
         steps: list[WorkflowStep],
     ):
-        step_ids = {
-            step.id
-            for step in steps
-        }
+        step_ids = {step.id for step in steps}
 
         missing_dependencies = {
-            step.id: [
-                dep
-                for dep in (step.depends_on or [])
-                if dep not in step_ids
-            ]
+            step.id: [dep for dep in (step.depends_on or []) if dep not in step_ids]
             for step in steps
         }
         missing_dependencies = {
-            step_id: deps
-            for step_id, deps in missing_dependencies.items()
-            if deps
+            step_id: deps for step_id, deps in missing_dependencies.items() if deps
         }
 
         if missing_dependencies:
@@ -90,9 +82,7 @@ class DAGEngine:
                 f"step {step_id} depends on missing step(s) {deps}"
                 for step_id, deps in missing_dependencies.items()
             )
-            raise ValueError(
-                f"Invalid workflow DAG: {details}"
-            )
+            raise ValueError(f"Invalid workflow DAG: {details}")
 
     # =====================================================
     # CONDITIONAL EXECUTION
@@ -144,10 +134,7 @@ class DAGEngine:
 
             deps = step.depends_on or []
 
-            if not all(
-                dep in completed_steps
-                for dep in deps
-            ):
+            if not all(dep in completed_steps for dep in deps):
                 continue
 
             if not self.evaluate_condition(
@@ -174,10 +161,7 @@ class DAGEngine:
 
             deps = step.depends_on or []
 
-            if not all(
-                dep in completed_steps
-                for dep in deps
-            ):
+            if not all(dep in completed_steps for dep in deps):
                 continue
 
             if self.evaluate_condition(
@@ -215,18 +199,12 @@ class DAGEngine:
         self.validate_dependencies(steps)
         self.detect_cycles(steps)
 
-        pending_steps = {
-            step.id: step
-            for step in steps
-        }
-
+        pending_steps = {step.id: step for step in steps}
 
         # persistent DAG state
-        completed_runs = (
-            await self.step_runs.list_completed_for_run(
-                db,
-                workflow_run.id,
-            )
+        completed_runs = await self.step_runs.list_completed_for_run(
+            db,
+            workflow_run.id,
         )
 
         completed_steps = {
@@ -251,10 +229,7 @@ class DAGEngine:
         terminal_steps = [
             step.id
             for step in steps
-            if not any(
-                step.id in (other.depends_on or [])
-                for other in steps
-            )
+            if not any(step.id in (other.depends_on or []) for other in steps)
         ]
 
         while pending_steps:
@@ -274,9 +249,7 @@ class DAGEngine:
             )
 
             if not ready_steps and not skipped_steps:
-                raise ValueError(
-                    "Deadlock detected in DAG"
-                )
+                raise ValueError("Deadlock detected in DAG")
 
             for step in skipped_steps:
                 pending_steps.pop(step.id)
@@ -313,9 +286,7 @@ class DAGEngine:
                     {
                         "step_id": step.id,
                         "name": step.name,
-                        "dependencies": (
-                            step.depends_on or []
-                        ),
+                        "dependencies": (step.depends_on or []),
                     },
                 )
 
@@ -325,6 +296,21 @@ class DAGEngine:
             # execute AI tasks in parallel
             # -----------------------------------------
             tasks = []
+            buffers: dict[int, str] = {step.id: "" for step in ready_steps}
+
+            def make_on_chunk(step_id, buffers=buffers):
+                async def on_chunk(chunk):
+                    buffers[step_id] += chunk
+                    if len(buffers[step_id]) >= PARTIAL_OUTPUT_FLUSH_CHARS:
+                        text, buffers[step_id] = buffers[step_id], ""
+                        await self._emit_locked(
+                            db,
+                            workflow_run.id,
+                            "partial_output",
+                            {"step_id": step_id, "delta": text},
+                        )
+
+                return on_chunk
 
             for step in ready_steps:
 
@@ -338,6 +324,7 @@ class DAGEngine:
                         },
                         max_retries=max_retries,
                         continue_on_error=continue_on_error,
+                        on_chunk=make_on_chunk(step.id),
                     )
                 )
 
@@ -345,6 +332,17 @@ class DAGEngine:
                 *tasks,
                 return_exceptions=True,
             )
+
+            # flush any leftover buffered text so the live view has the
+            # complete text before step_done/step_error is emitted
+            for step_id, remaining in buffers.items():
+                if remaining:
+                    await self._emit_locked(
+                        db,
+                        workflow_run.id,
+                        "partial_output",
+                        {"step_id": step_id, "delta": remaining},
+                    )
 
             results = []
 
@@ -385,7 +383,7 @@ class DAGEngine:
 
                 if existing and existing.status == WorkflowRunStatus.COMPLETED:
                     continue
-                
+
                 await self.step_runs.create(
                     db=db,
                     workflow_run_id=workflow_run.id,
@@ -393,7 +391,11 @@ class DAGEngine:
                     step_order=result["step_order"],
                     input=result["prompt"],
                     output=result["output"],
-                    status=WorkflowRunStatus.COMPLETED if result["success"] else WorkflowRunStatus.FAILED,
+                    status=(
+                        WorkflowRunStatus.COMPLETED
+                        if result["success"]
+                        else WorkflowRunStatus.FAILED
+                    ),
                     execution_time_ms=result["execution_time_ms"],
                     retry_count=result["retry_count"],
                     error_message=result["error_message"],
@@ -407,28 +409,18 @@ class DAGEngine:
 
                 if result["success"]:
 
-                    completed_steps.add(
-                        result["step_id"]
-                    )
+                    completed_steps.add(result["step_id"])
 
-                    completed_outputs[
-                        result["step_id"]
-                    ] = result["output"]
+                    completed_outputs[result["step_id"]] = result["output"]
 
                     await self.events.emit(
                         db,
                         workflow_run.id,
                         "step_done",
                         {
-                            "step_id": result[
-                                "step_id"
-                            ],
-                            "output": result[
-                                "output"
-                            ],
-                            "execution_time_ms": result[
-                                "execution_time_ms"
-                            ],
+                            "step_id": result["step_id"],
+                            "output": result["output"],
+                            "execution_time_ms": result["execution_time_ms"],
                         },
                     )
 
@@ -439,19 +431,13 @@ class DAGEngine:
                         workflow_run.id,
                         "step_error",
                         {
-                            "step_id": result[
-                                "step_id"
-                            ],
-                            "error": result[
-                                "error_message"
-                            ],
+                            "step_id": result["step_id"],
+                            "error": result["error_message"],
                         },
                     )
 
                     if continue_on_error:
-                        completed_steps.add(
-                            result["step_id"]
-                        )
+                        completed_steps.add(result["step_id"])
                         failed_steps[result["step_id"]] = result["error_message"]
 
                     if not continue_on_error:
@@ -473,9 +459,7 @@ class DAGEngine:
             if completed_outputs.get(step_id)
         ]
 
-        final_output = "\n\n".join(
-            final_outputs
-        )
+        final_output = "\n\n".join(final_outputs)
 
         if not final_output and any(
             step_id in failed_steps for step_id in terminal_steps

@@ -28,17 +28,8 @@ from app.schemas import (
 )
 from app.services.workflow.event_bus import EventBus
 
-STREAM_POLL_INTERVAL_SECONDS = 1
-TERMINAL_RUN_STATUSES = {
-    WorkflowRunStatus.COMPLETED,
-    WorkflowRunStatus.FAILED,
-    WorkflowRunStatus.CANCELED,
-}
-
 router = APIRouter()
 
-DEFAULT_PAGE = 1
-DEFAULT_PAGE_SIZE = 20
 DEFAULT_STATUS_FILTER = None
 DEFAULT_PROJECT_ID = None
 DEFAULT_STATUS_QUERY = Query(DEFAULT_STATUS_FILTER, alias="status")
@@ -232,8 +223,18 @@ async def _tail_run_events(
     runs: WorkflowRunRepositoryDep,
     is_disconnected,
 ):
+    # Capture plain values up front. `db.expire_all()` below expires every
+    # ORM object tracked by this session, including `workflow_run` -- and a
+    # generator being driven by StreamingResponse's __anext__() calls runs
+    # outside the greenlet context FastAPI sets up for the request handler,
+    # so any later attribute access on an expired object (even `.id`) raises
+    # sqlalchemy.exc.MissingGreenlet instead of lazily reloading. Never touch
+    # `workflow_run`'s attributes again after the first expire_all().
+    run_id = workflow_run.id
+    status_ = workflow_run.status
+
     last_id = 0
-    for event in await events.get_for_run(db=db, run_id=workflow_run.id):
+    for event in await events.get_for_run(db=db, run_id=run_id):
         last_id = event.id
         yield EventBus.format_frame(
             workflow_run_id=event.workflow_run_id,
@@ -243,23 +244,28 @@ async def _tail_run_events(
             timestamp=event.created_at,
         )
 
-    status_ = workflow_run.status
     while status_ not in TERMINAL_RUN_STATUSES:
         if await is_disconnected():
             break
 
         await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
 
-        new_events = await events.get_after_id(db=db, run_id=workflow_run.id, after_id=last_id)
-        for event in new_events:
-            last_id = event.id
-            yield EventBus.format_frame(
-                workflow_run_id=event.workflow_run_id,
-                event_type=event.event_type,
-                payload=event.payload,
-                event_id=event.id,
-                timestamp=event.created_at,
-            )
+        new_events = await events.get_after_id(db=db, run_id=run_id, after_id=last_id)
+        if new_events:
+            for event in new_events:
+                last_id = event.id
+                yield EventBus.format_frame(
+                    workflow_run_id=event.workflow_run_id,
+                    event_type=event.event_type,
+                    payload=event.payload,
+                    event_id=event.id,
+                    timestamp=event.created_at,
+                )
+        else:
+            # Keep the connection actively sending data so no idle-connection
+            # timeout (proxy, browser, or client HTTP library) closes it
+            # mid-stream while the run is still pending/running.
+            yield ": keep-alive\n\n"
 # Tracked down and fixed the real bug behind "no live streaming": 
 # stale SQLAlchemy identity-map state. The stream generator's workflow_run object 
 # was loaded once at request start and never refreshed, so its .status stayed "pending" forever 
@@ -267,7 +273,7 @@ async def _tail_run_events(
 # and the connection just hung until timeout instead of closing. 
 # Fixed with db.expire_all() before each status re-check in
         db.expire_all()
-        current_run = await runs.get_by_id(db=db, run_id=workflow_run.id)
+        current_run = await runs.get_by_id(db=db, run_id=run_id)
         status_ = current_run.status if current_run else status_
 
 
