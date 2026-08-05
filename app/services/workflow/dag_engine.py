@@ -3,6 +3,7 @@ import asyncio
 from simpleeval import simple_eval
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import PARTIAL_OUTPUT_FLUSH_CHARS
 from app.enums import WorkflowRunStatus
 from app.models import WorkflowRun, WorkflowStep
 from app.repositories import (

@@ -4,8 +4,8 @@ from pathlib import Path
 from fastapi import APIRouter, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-FRONTEND_URL = "https://ai-automation-platform.com"
-GITHUB_REPOSITORY_URL = "https://github.com/Anastasia-front/ai-platform-backend"
+from app.core import FRONTEND_URL, GITHUB_REPOSITORY_URL
+
 FAVICON_SVG_PATH = Path(__file__).resolve().parents[2] / "static" / "favicon.svg"
 
 router = APIRouter()

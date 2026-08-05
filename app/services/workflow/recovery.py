@@ -1,19 +1,14 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from app.core import AsyncSessionLocal
+from app.core import STALE_AFTER, AsyncSessionLocal
 from app.enums import WorkflowRunStatus
 from app.repositories import WorkflowRunRepository
 from app.services.background_jobs import BackgroundJobService
 
 logger = logging.getLogger(__name__)
-
-# How long a run may sit in PENDING/RUNNING with no status update before it
-# is considered abandoned (worker crashed/restarted) rather than still being
-# actively worked on by a live Celery worker.
-STALE_AFTER = timedelta(minutes=10)
 
 
 async def recover_running_workflows(

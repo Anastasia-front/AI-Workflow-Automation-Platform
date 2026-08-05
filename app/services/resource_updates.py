@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import MAX_RESOURCE_NAME_LENGTH
 from app.enums import AgentRunStatus, WorkflowRunStatus
 from app.models import AgentRun, Chat, Project, Workflow, WorkflowStep
 from app.repositories import (
@@ -20,8 +21,6 @@ from app.schemas import (
     WorkflowStepCreate,
     WorkflowUpdate,
 )
-
-MAX_RESOURCE_NAME_LENGTH = 255
 
 
 def normalize_resource_label(value: str | None, field_name: str) -> str | None:

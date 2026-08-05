@@ -1,4 +1,7 @@
 import re
+from datetime import timedelta
+
+from app.enums import WorkflowRunStatus
 
 CHAT_KIND = "chat"
 EMBEDDING_KIND = "embedding"
@@ -124,3 +127,34 @@ QUERY_SECRET_RE = re.compile(
     flags=re.IGNORECASE,
 )
 GOOGLE_API_KEY_RE = re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b")
+
+DEFAULT_PAGE = 1
+DEFAULT_PAGE_SIZE = 20
+
+# SSE polling interval (seconds) for GET /runs/{run_id}/stream's DB-tail loop.
+STREAM_POLL_INTERVAL_SECONDS = 1
+
+TERMINAL_RUN_STATUSES = {
+    WorkflowRunStatus.COMPLETED,
+    WorkflowRunStatus.FAILED,
+    WorkflowRunStatus.CANCELED,
+}
+
+# PARTIAL_OUTPUT_FLUSH_CHARS: chars buffered before a partial_output event is
+# flushed. Steps run concurrently via asyncio.gather, and AsyncSession isn't
+# safe for concurrent writes, so every emit (including partials) goes through
+# a single lock -- this keeps write volume reasonable per step.
+# Chars buffered before a workflow step's partial_output event is flushed.
+PARTIAL_OUTPUT_FLUSH_CHARS = 40
+
+MAX_RESOURCE_NAME_LENGTH = 255
+
+# Threshold before a PENDING/RUNNING workflow run is considered abandoned
+# (e.g. worker crashed mid-execution) and eligible for recovery.
+# How long a run may sit in PENDING/RUNNING with no status update before it
+# is considered abandoned (worker crashed/restarted) rather than still being
+# actively worked on by a live Celery worker.
+STALE_AFTER = timedelta(minutes=10)
+
+FRONTEND_URL = "https://ai-automation-platform.com"
+GITHUB_REPOSITORY_URL = "https://github.com/Anastasia-front/ai-platform-backend"
