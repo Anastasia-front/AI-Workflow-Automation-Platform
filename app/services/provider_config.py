@@ -101,7 +101,17 @@ class ProviderConfigService:
             return [self.chat_configs[fixed_provider]]
 
         providers = self._parse_chain(settings.CHAT_PROVIDER_CHAIN, ChatProvider)
-        return [self.chat_configs[provider] for provider in providers]
+        active = next(
+            (provider for provider in self.chat_configs if self.chat_configs[provider].active),
+            None,
+        )
+        ordered = []
+        if active is not None:
+            ordered.append(self.chat_configs[active])
+        ordered.extend(
+            self.chat_configs[provider] for provider in providers if provider != active
+        )
+        return ordered
 
     def embedding_chain(
         self,
@@ -113,7 +123,21 @@ class ProviderConfigService:
         providers = self._parse_chain(
             settings.EMBEDDING_PROVIDER_CHAIN, EmbeddingProvider
         )
-        return [self.embedding_configs[provider] for provider in providers]
+        active = next(
+            (
+                provider
+                for provider in self.embedding_configs
+                if self.embedding_configs[provider].active
+            ),
+            None,
+        )
+        ordered = []
+        if active is not None:
+            ordered.append(self.embedding_configs[active])
+        ordered.extend(
+            self.embedding_configs[provider] for provider in providers if provider != active
+        )
+        return ordered
 
     async def load_from_db(self, db: AsyncSession) -> None:
         rows = await self.provider_configs.list_all(db)
@@ -367,7 +391,7 @@ class ProviderConfigService:
             )
             healthy = True
             message = "Provider responded."
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             healthy = False
             message = str(exc)
 
@@ -410,7 +434,7 @@ class ProviderConfigService:
             await service.embed_text("health check")
             healthy = True
             message = "Provider responded."
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             healthy = False
             message = str(exc)
 
