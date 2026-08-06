@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AgentRun, Project, Workflow, WorkflowRun
+from app.models import AgentRun, Project, Workflow
 
 
 class AgentRunRepository:
@@ -31,12 +31,8 @@ class AgentRunRepository:
         result = await db.execute(
             select(AgentRun)
             .join(
-                WorkflowRun,
-                WorkflowRun.id == AgentRun.workflow_id,
-            )
-            .join(
                 Workflow,
-                Workflow.id == WorkflowRun.workflow_id,
+                Workflow.id == AgentRun.workflow_id,
             )
             .join(
                 Project,

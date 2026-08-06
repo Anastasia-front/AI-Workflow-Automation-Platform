@@ -77,14 +77,17 @@ class MessageRepository:
         db: AsyncSession,
         message: Message,
     ):
+        # Compare by id, not created_at: Postgres now() is the transaction
+        # timestamp, so a user/assistant pair inserted in the same
+        # transaction share an identical created_at.
         result = await db.execute(
             select(Message)
             .where(
                 Message.chat_id == message.chat_id,
                 Message.role == "user",
-                Message.created_at < message.created_at,
+                Message.id < message.id,
             )
-            .order_by(Message.created_at.desc())
+            .order_by(Message.id.desc())
             .limit(1)
         )
 

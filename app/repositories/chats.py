@@ -72,7 +72,7 @@ class ChatRepository:
         chat: Chat,
         name: str,
     ):
-        chat.name = name
+        chat.title = name
         await db.flush()
         await db.refresh(chat)
 
