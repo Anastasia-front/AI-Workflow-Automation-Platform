@@ -95,7 +95,7 @@ class ChatUpdateService:
         chat: Chat,
         payload: ChatUpdate,
     ) -> Chat:
-        name = normalize_resource_label(payload.name, "Chat name")
+        name = normalize_resource_label(payload.title, "Chat title")
         if name is not None:
             chat = await self.chats.update_name(db, chat, name)
 
