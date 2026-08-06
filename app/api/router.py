@@ -36,7 +36,6 @@ router.include_router(
 
 router.include_router(
     messages.router,
-    prefix="/chats",
     tags=["Messages"],
 )
 

@@ -21,7 +21,7 @@ router = APIRouter()
 # GET MESSAGES
 # -------------------------------------------------
 @router.get(
-    "/{chat_id}/messages",
+    "/chats/{chat_id}/messages",
     response_model=list[MessageResponse],
 )
 async def get_messages(
@@ -39,7 +39,7 @@ async def get_messages(
 # CREATE MESSAGE
 # -------------------------------------------------
 @router.post(
-    "/{chat_id}/messages",
+    "/chats/{chat_id}/messages",
     response_model=list[MessageResponse],
     status_code=status.HTTP_201_CREATED,
 )
@@ -64,7 +64,7 @@ async def create_message(
 # STREAM MESSAGE
 # -------------------------------------------------
 @router.post(
-    "/{chat_id}/messages/stream",
+    "/chats/{chat_id}/messages/stream",
 )
 async def create_message_stream(
     payload: MessageCreate,
