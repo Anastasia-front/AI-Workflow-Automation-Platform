@@ -18,6 +18,7 @@ from app.services.ai.providers import (
     OllamaProvider,
     OpenRouterProvider,
 )
+from app.services.ai.tool_types import ChatResult, ToolSchema
 from app.services.provider_config import provider_config
 
 
@@ -166,6 +167,64 @@ class AIService:
             attempts,
             breaker=chat_breaker,
             operation="chat",
+        )
+        self.last_provider_used = result.provider
+        self.last_model_used = result.model
+        self.last_fallback_used = result.fallback_used
+        return result.value
+
+    async def generate_tool_call(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[ToolSchema],
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> ChatResult:
+        """Ask the model to either answer directly or call one of `tools`.
+
+        Not every configured provider supports native tool calling, so this
+        walks the same provider chain as `generate_chat_response` but skips
+        (rather than fails over from) providers whose `chat_with_tools` is
+        unimplemented, then applies the normal retry/circuit-breaker policy
+        to the providers that do support it.
+        """
+        used_model = model or self.model
+
+        prepared_messages = messages
+        if system_prompt:
+            prepared_messages = [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ]
+
+        attempts = []
+        for config in await self._available_chat_configs():
+            provider = self._build_provider_for_config(config)
+            if type(provider).chat_with_tools is AIProvider.chat_with_tools:
+                continue
+            model_name = used_model if config.provider == self.provider_name else config.model
+            attempts.append(
+                ProviderAttempt(
+                    provider=config.provider.value,
+                    model=model_name,
+                    call=lambda provider=provider, model_name=model_name: provider.chat_with_tools(
+                        messages=prepared_messages,
+                        model=model_name,
+                        tools=tools,
+                    ),
+                )
+            )
+
+        if not attempts:
+            raise AllProvidersFailedError(
+                [ProviderFailureSummary(provider="none", model=used_model, category="unsupported")]
+            )
+
+        result = await run_with_failover(
+            attempts,
+            breaker=chat_breaker,
+            operation="chat_with_tools",
         )
         self.last_provider_used = result.provider
         self.last_model_used = result.model
