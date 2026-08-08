@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     CHAT_PROVIDER: ChatProvider = ChatProvider.OLLAMA
     EMBEDDING_PROVIDER: EmbeddingProvider = EmbeddingProvider.OLLAMA
 
-    CHAT_BASE_URL: str = "http://localhost:11434"
-    EMBEDDING_BASE_URL: str = "http://localhost:11434"
+    CHAT_BASE_URL: str = "http://ollama.ai-platform.internal:11434"
+    EMBEDDING_BASE_URL: str = "http://ollama.ai-platform.internal:11434"
 
     CHAT_API_KEY: str = ""
     EMBEDDING_API_KEY: str = ""
