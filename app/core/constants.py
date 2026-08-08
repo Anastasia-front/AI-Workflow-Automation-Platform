@@ -158,3 +158,6 @@ STALE_AFTER = timedelta(minutes=10)
 
 FRONTEND_URL = "https://ai-automation-platform.com"
 GITHUB_REPOSITORY_URL = "https://github.com/Anastasia-front/ai-platform-backend"
+API_URL = "https://api.ai-automation-platform.com"
+DOCS_URL = "https://docs.ai-automation-platform.com"
+POSTMAN_DOCS_URL = "https://postman.ai-automation-platform.com"
