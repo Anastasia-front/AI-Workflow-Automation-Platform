@@ -1,12 +1,21 @@
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from app.core import FRONTEND_URL, GITHUB_REPOSITORY_URL
+from app.core import API_URL, FRONTEND_URL, GITHUB_REPOSITORY_URL
 
 FAVICON_SVG_PATH = Path(__file__).resolve().parents[2] / "static" / "favicon.svg"
+API_FAVICON_SVG_PATH = Path(__file__).resolve().parents[2] / "static" / "api_favicon.svg"
+POSTMAN_FAVICON_SVG_PATH = (
+    Path(__file__).resolve().parents[2] / "static" / "postman_favicon.svg"
+)
+API_LANDING_PATH = Path(__file__).resolve().parents[2] / "static" / "api-landing.html"
+POSTMAN_REPORT_PATH = Path(__file__).resolve().parents[2] / "static" / "postman-report.html"
+POSTMAN_DETAIL_REPORT_PATH = (
+    Path(__file__).resolve().parents[2] / "static" / "postman-detail-report.html"
+)
 
 router = APIRouter()
 
@@ -425,6 +434,34 @@ def render_docs_landing(
         outline-offset: 3px;
       }}
 
+      .back-link {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--accent);
+        font-weight: 700;
+        text-decoration: none;
+        flex-shrink: 0;
+      }}
+
+      .back-link:hover,
+      .back-link:focus-visible {{
+        color: var(--accent-strong);
+      }}
+
+      .top-bar {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }}
+
+      .bottom-bar {{
+        margin-top: 34px;
+      }}
+
       .content-section {{
         margin-top: 18px;
         padding: 28px;
@@ -557,7 +594,10 @@ def render_docs_landing(
   <body>
     <main>
       <section class="intro" aria-labelledby="page-title">
-        <p id="eyebrow">documentation</p>
+        <div class="top-bar">
+          <p id="eyebrow">documentation</p>
+          <a class="back-link" href="{escape(API_URL)}">&larr; Back to API</a>
+        </div>
         <h1 id="page-title">{escape(api_title)} API</h1>
         <p class="subtitle">{escape(description)}</p>
         <div class="metadata-row">
@@ -581,13 +621,27 @@ def render_docs_landing(
         {cards}
       </section>
       {_docs_sections()}
+      <div class="bottom-bar">
+        <a class="back-link" href="{escape(API_URL)}">&larr; Back to API</a>
+      </div>
     </main>
   </body>
 </html>"""
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def docs_landing(request: Request) -> HTMLResponse:
+async def docs_landing(request: Request) -> Response:
+    # docs./api./postman. all proxy to this same FastAPI app (see
+    # deploy/nginx/ai-platform-backend.conf) -- branch on the Host header
+    # nginx already forwards so each subdomain gets its own page.
+    host = request.headers.get("host", "").split(":", 1)[0]
+
+    if host.startswith("postman."):
+        return FileResponse(POSTMAN_REPORT_PATH, media_type="text/html")
+
+    if host.startswith("api."):
+        return FileResponse(API_LANDING_PATH, media_type="text/html")
+
     return HTMLResponse(
         render_docs_landing(
             api_title=request.app.title,
@@ -602,10 +656,38 @@ async def legacy_docs_redirect() -> RedirectResponse:
     return RedirectResponse(url="/swagger", status_code=status.HTTP_302_FOUND)
 
 
+@router.get("/postman-detail-report", include_in_schema=False)
+async def postman_detail_report() -> FileResponse:
+    # Full per-request newman run (htmlextra), with Bearer tokens and
+    # generated passwords stripped by postman/redact_report.py before this
+    # file is ever written -- see postman/README.md for how to regenerate it.
+    return FileResponse(POSTMAN_DETAIL_REPORT_PATH, media_type="text/html")
+
+
 @router.get("/favicon.svg", include_in_schema=False)
 async def favicon_svg() -> FileResponse:
     return FileResponse(
         FAVICON_SVG_PATH,
+        media_type="image/svg+xml",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+    )
+
+@router.get("/api_favicon.svg", include_in_schema=False)
+async def api_favicon_svg() -> FileResponse:
+    return FileResponse(
+        API_FAVICON_SVG_PATH,
+        media_type="image/svg+xml",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+    )
+
+@router.get("/postman_favicon.svg", include_in_schema=False)
+async def postman_favicon_svg() -> FileResponse:
+    return FileResponse(
+        POSTMAN_FAVICON_SVG_PATH,
         media_type="image/svg+xml",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",

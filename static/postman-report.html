@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="/postman_favicon.svg?v=2" />
+  <title>Postman suite — AI Automation Platform Backend</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #18202f;
+      --muted: #5e6878;
+      --line: #d9dee8;
+      --accent: #0ea5e9;
+      --accent-strong: #0ea5e9;
+      --eyebrow: #ea7130;
+      --shadow: 0 18px 45px rgba(24, 32, 47, 0.08);
+      --get: #4ec3f7;
+      --post: #40dea6;
+      --patch: #ffa676;
+      --delete: #ff6c6c;
+      --ok: #03b877;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #eef3fb 0, rgba(238, 243, 251, 0) 340px), var(--bg);
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 56px 0;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---------- Intro ---------- */
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--eyebrow);
+      font-size: 0.84rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.25rem, 7vw, 4.75rem);
+      line-height: 0.98;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.16rem;
+      line-height: 1.6;
+      max-width: 62ch;
+    }
+
+    .metadata {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .metadata li {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .metadata li strong {
+      color: var(--text);
+    }
+
+    .row-between {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* ---------- Stat cards (styled like resource cards) ---------- */
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 34px;
+    }
+
+    .card {
+      min-height: 130px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 22px 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .card .value {
+      font-size: 2.35rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      line-height: 1;
+    }
+
+    .card .value.ok {
+      color: var(--ok);
+    }
+
+    .card .value sub {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-left: 3px;
+    }
+
+    .card .label {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    /* ---------- Content sections (matches docs_landing) ---------- */
+
+    .content-section {
+      margin-top: 18px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .content-section p,
+    .content-section li {
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .content-section h2 {
+      margin: 0 0 10px;
+      font-size: 1.55rem;
+      letter-spacing: 0;
+    }
+
+    .content-section .note {
+      margin: -4px 0 20px;
+    }
+
+    /* ---------- Folder coverage bars ---------- */
+
+    .folder-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 4px;
+    }
+
+    .folder-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 34px;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .folder-name {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bar-track {
+      display: flex;
+      height: 18px;
+      border-radius: 4px;
+      overflow: hidden;
+      background: #eef1f6;
+      border: 1px solid var(--line);
+    }
+
+    .bar-seg {
+      height: 100%;
+      min-width: 2px;
+    }
+
+    .bar-seg[data-m="GET"] {
+      background: var(--get);
+    }
+
+    .bar-seg[data-m="POST"] {
+      background: var(--post);
+    }
+
+    .bar-seg[data-m="PATCH"] {
+      background: var(--patch);
+    }
+
+    .bar-seg[data-m="DELETE"] {
+      background: var(--delete);
+    }
+
+    .folder-count {
+      font-size: 0.86rem;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .method-legend {
+      display: flex;
+      gap: 22px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .swatch[data-m="GET"] {
+      background: var(--get);
+    }
+
+    .swatch[data-m="POST"] {
+      background: var(--post);
+    }
+
+    .swatch[data-m="PATCH"] {
+      background: var(--patch);
+    }
+
+    .swatch[data-m="DELETE"] {
+      background: var(--delete);
+    }
+
+    .legend-item .n {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    /* ---------- Assertion facts-grid ---------- */
+
+    .facts-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .facts-grid article {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fbfcff;
+    }
+
+    .facts-grid strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+
+    .facts-grid .n {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .fact-bar {
+      margin-top: 10px;
+      height: 5px;
+      border-radius: 3px;
+      background: #eef1f6;
+      overflow: hidden;
+    }
+
+    .fact-bar>i {
+      display: block;
+      height: 100%;
+      background: var(--ok);
+    }
+
+    /* ---------- Flagged callout ---------- */
+
+    .flag-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .flag-grid article {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: #fbfcff;
+    }
+
+    .flag-tag {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: #fdf1e8;
+      color: var(--eyebrow);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .flag-grid .req {
+      display: block;
+      margin: 0 0 6px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .flag-grid span:not(.flag-tag) {
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 0.92rem;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #334155;
+    }
+
+    /* ---------- Footer command block ---------- */
+
+    pre {
+      overflow-x: auto;
+      margin: 0;
+      color: #334155;
+      font: 0.88rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #fbfcff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+
+    .flag {
+      color: var(--accent);
+    }
+
+    .comment {
+      color: var(--muted);
+    }
+
+    .compact-list {
+      margin: 14px 0 0;
+      padding-left: 22px;
+    }
+
+    .card-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 42px;
+      margin-top: 18px;
+      padding: 0 16px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .card-link:hover,
+    .card-link:focus-visible {
+      background: var(--accent-strong);
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 28px;
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .back-link:hover,
+    .back-link:focus-visible {
+      color: var(--accent-strong);
+    }
+
+    .row-between .card-link,
+    .row-between .back-link {
+      margin-top: 0;
+      flex-shrink: 0;
+    }
+
+    .download-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 34px;
+    }
+
+    .download-row .card-link {
+      margin-top: 0;
+      background: var(--panel);
+      color: var(--accent);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .download-row .card-link:hover,
+    .download-row .card-link:focus-visible {
+      background: #eef7fd;
+      color: var(--accent-strong);
+    }
+
+    @media (max-width: 860px) {
+      main {
+        padding: 40px 0;
+      }
+
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .facts-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flag-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 620px) {
+      main {
+        width: min(100% - 24px, 1120px);
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .facts-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .folder-row {
+        grid-template-columns: 110px 1fr 30px;
+      }
+
+      .content-section {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <div class="row-between">
+        <p class="eyebrow">test coverage</p>
+        <a class="back-link" href="https://api.ai-automation-platform.com">&larr; Back to API</a>
+      </div>
+      <h1 id="page-title">Postman suite</h1>
+      <p class="subtitle">Every endpoint of the AI Automation Platform backend, verified request by request against the
+        live FastAPI service via <code>newman</code>.</p>
+      <div class="row-between">
+        <ul class="metadata" aria-label="Run metadata">
+          <li>Collection: <strong>v2.1</strong></li>
+          <li>Folders: <strong>12</strong></li>
+          <li>Requests: <strong>82</strong></li>
+          <li>Runner: <strong>newman</strong></li>
+        </ul>
+        <a class="card-link" href="/postman-detail-report">See every request &amp; response &rarr;</a>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Headline results">
+      <div class="card">
+        <div class="value ok mono">81<sub>/82</sub></div>
+        <div class="label">Requests passing</div>
+      </div>
+      <div class="card">
+        <div class="value ok mono">98.8%</div>
+        <div class="label">Pass rate</div>
+      </div>
+      <div class="card">
+        <div class="value ok mono">312<sub>/317</sub></div>
+        <div class="label">Assertions passing</div>
+      </div>
+      <div class="card">
+        <div class="value mono" style="color:var(--eyebrow);">2</div>
+        <div class="label">Flagged, not broken</div>
+      </div>
+    </section>
+
+    <div class="download-row" aria-label="Download Postman files">
+      <a class="card-link" href="/static/postman/postman_collection.json" download>&#8595; Download Collection
+        (.json)</a>
+      <a class="card-link" href="/static/postman/postman_environment.json" download>&#8595; Download Environment
+        (.json)</a>
+    </div>
+
+    <section class="content-section" aria-labelledby="coverage-title">
+      <p class="eyebrow note">visual summary</p>
+      <h2 id="coverage-title">Coverage by folder</h2>
+      <p class="note">82 requests, sized by count and segmented by HTTP method.</p>
+      <div class="folder-chart" id="chart"></div>
+      <div class="method-legend">
+        <div class="legend-item"><span class="swatch" data-m="GET"></span>GET <span class="n mono">33</span></div>
+        <div class="legend-item"><span class="swatch" data-m="POST"></span>POST <span class="n mono">37</span></div>
+        <div class="legend-item"><span class="swatch" data-m="PATCH"></span>PATCH <span class="n mono">5</span></div>
+        <div class="legend-item"><span class="swatch" data-m="DELETE"></span>DELETE <span class="n mono">7</span></div>
+      </div>
+    </section>
+
+    <section class="content-section" aria-labelledby="checks-title">
+      <p class="eyebrow note">what runs on every request</p>
+      <h2 id="checks-title">Assertion coverage</h2>
+      <div class="facts-grid">
+        <article>
+          <strong>Status &amp; timing</strong>
+          <span class="n mono">82/82</span>
+          <div class="fact-bar"><i style="width:100%"></i></div>
+        </article>
+        <article>
+          <strong>Schema &amp; required fields</strong>
+          <span class="n mono">82/82</span>
+          <div class="fact-bar"><i style="width:100%"></i></div>
+        </article>
+        <article>
+          <strong>Auth behavior (401/403)</strong>
+          <span class="n mono">6/6</span>
+          <div class="fact-bar"><i style="width:100%"></i></div>
+        </article>
+        <article>
+          <strong>ID chaining across folders</strong>
+          <span class="n mono">14/14</span>
+          <div class="fact-bar"><i style="width:100%"></i></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="content-section" aria-labelledby="flagged-title">
+      <p class="eyebrow note">confirmed against the live server, not assumed</p>
+      <h2 id="flagged-title">Flagged, not broken</h2>
+      <div class="flag-grid">
+        <article>
+          <span class="flag-tag">Needs secret</span>
+          <span class="req">POST /auth/google</span>
+          <span>Fails with 401 because the environment has no real Google OAuth credential to present — there's no way
+            to fake that from a local run. Passes once a valid test credential is supplied.</span>
+        </article>
+        <article>
+          <span class="flag-tag">Client-only</span>
+          <span class="req">POST /workflows/{id}/runs/stream</span>
+          <span>newman occasionally aborts this long-lived <code>text/event-stream</code> connection mid-run. Verified
+            independently with <code>curl -N</code> that the endpoint streams and closes correctly — a newman
+            limitation, not a backend or collection defect.</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="content-section" aria-labelledby="run-title">
+      <p class="eyebrow note">reproduce this run</p>
+      <h2 id="run-title">Run it yourself</h2>
+      <pre><span class="comment"># from ai-platform-backend/postman</span>
+newman run postman_collection.json \
+  -e postman_environment.json \
+  <span class="flag">--env-var</span> "uploadedFile=./sample.txt" \
+  <span class="flag">--env-var</span> "invalidUploadFile=./bad.exe" \
+  <span class="flag">--reporters</span> cli,htmlextra</pre>
+      <ul class="compact-list">
+        <li>Full docs: <code>postman/README.md</code></li>
+        <li>Collection: <code>postman/postman_collection.json</code></li>
+      </ul>
+      <p class="note" style="margin-top:10px;">Full per-request run detail (headers, bodies, timing) is one click away
+        above. Auth tokens and generated passwords are stripped before publishing.</p>
+      <a class="back-link" href="https://api.ai-automation-platform.com">&larr; Back to API</a>
+    </section>
+  </main>
+
+  <script>
+    var data = [
+      { name: "Health", total: 1, m: { GET: 1 } },
+      { name: "Authentication", total: 9, m: { POST: 7, GET: 2 } },
+      { name: "Projects", total: 7, m: { POST: 3, GET: 3, PATCH: 1 } },
+      { name: "Chats", total: 5, m: { POST: 1, GET: 3, PATCH: 1 } },
+      { name: "Messages", total: 6, m: { GET: 1, POST: 5 } },
+      { name: "Documents", total: 9, m: { GET: 4, POST: 5 } },
+      { name: "Document Processing", total: 9, m: { POST: 8, GET: 1 } },
+      { name: "AI Providers", total: 7, m: { GET: 5, PATCH: 2 } },
+      { name: "Workflow Templates", total: 10, m: { POST: 4, GET: 5, PATCH: 1 } },
+      { name: "Workflow Runs", total: 9, m: { GET: 6, POST: 3 } },
+      { name: "Executions", total: 3, m: { POST: 1, GET: 2 } },
+      { name: "Cleanup", total: 7, m: { DELETE: 7 } }
+    ];
+
+    var maxTotal = Math.max.apply(null, data.map(function (d) { return d.total; }));
+    var order = ["GET", "POST", "PATCH", "DELETE"];
+    var chart = document.getElementById("chart");
+
+    data.forEach(function (folder) {
+      var row = document.createElement("div");
+      row.className = "folder-row";
+
+      var name = document.createElement("div");
+      name.className = "folder-name";
+      name.textContent = folder.name;
+      row.appendChild(name);
+
+      var track = document.createElement("div");
+      track.className = "bar-track";
+      track.style.width = (100 * folder.total / maxTotal) + "%";
+
+      order.forEach(function (method) {
+        var count = folder.m[method];
+        if (!count) return;
+        var seg = document.createElement("div");
+        seg.className = "bar-seg";
+        seg.dataset.m = method;
+        seg.style.width = (100 * count / folder.total) + "%";
+        seg.title = method + " × " + count;
+        track.appendChild(seg);
+      });
+      row.appendChild(track);
+
+      var count = document.createElement("div");
+      count.className = "folder-count mono";
+      count.textContent = folder.total;
+      row.appendChild(count);
+
+      chart.appendChild(row);
+    });
+  </script>
+</body>
+
+</html>

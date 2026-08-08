@@ -1,0 +1,4332 @@
+{
+  "auth": {
+    "bearer": [
+      {
+        "key": "token",
+        "type": "string",
+        "value": "{{accessToken}}"
+      }
+    ],
+    "type": "bearer"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "// Collection-level pre-request script.",
+          "// Auth is inherited via collection-level bearer token ({{accessToken}}).",
+          "// Public endpoints (health, register, login, google, refresh) override auth to 'noauth' at the item level.",
+          "// Add any additional reusable setup here (e.g. timestamp helpers)."
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "info": {
+    "_postman_id": "ai-platform-backend-collection",
+    "description": "Postman collection derived strictly from the ai-platform-backend FastAPI source code (app/api/routes, app/schemas, app/dependencies). Base path has no global prefix; endpoints are mounted at root (e.g. /auth, /projects, /workflows, /runs, /providers, /health). Auth uses JWT Bearer tokens issued by /auth/login (OAuth2 password form) and /auth/register.",
+    "name": "AI Platform Backend API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Health Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Public health check endpoint. Auth: none. Calls HealthService.check(db) which likely checks DB connectivity. Response schema not modeled with a Pydantic response_model in code (returned dict from service) - TODO: verify exact field names returned by HealthService.check.\n\nExpected success: 200 with a JSON status payload.\nExpected errors: none explicitly raised in route; a DB outage could surface as 500 depending on HealthService implementation (TODO: verify).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ],
+              "raw": "{{baseUrl}}/health"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Health"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate credentials once per environment run so Login/refresh/etc can reuse them.",
+                  "if (!pm.environment.get('email')) {",
+                  "    pm.environment.set('email', 'qa-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '@example.com');",
+                  "}",
+                  "if (!pm.environment.get('password')) {",
+                  "    pm.environment.set('password', 'Passw0rd!' + Math.floor(Math.random() * 1e6));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('email');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save userId to environment', function () {",
+                  "    if (jsonData.id) { pm.environment.set('userId', jsonData.id); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Register",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Registers a new user. Auth: none. Body: RegisterRequest {email: EmailStr, password: str}. Password validated by validate_secure_password: min length 6, requires an uppercase letter, a digit, and a special character (see app/core PASSWORD_RULE_MESSAGE).\n\nSuccess: 201 with UserResponse {id, email, created_at}.\nErrors: 422 if email invalid or password fails the secure-password rule. Duplicate email: no explicit ResourceConflictError/409 handling was found in AuthService.create_user or UserRepository.create - a duplicate email will likely raise an unhandled DB IntegrityError (TODO: verify actual status code, probably 500 unless a DB-level exception handler exists).\n\nNote: Duplicate email registration now returns 409 Conflict with detail \"A user with this email already exists\" (AuthService.create_user checks for an existing user before insert; previously this raised an unhandled IntegrityError -> 500).\n\nCredentials are generated once (pre-request script) and stored in the environment as {{email}}/{{password}} so Login and the duplicate-email negative test reuse the same user instead of registering a fresh random email each run.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ],
+              "raw": "{{baseUrl}}/auth/register"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 409', function () {",
+                  "    pm.response.to.have.status(409);",
+                  "});",
+                  "",
+                  "pm.test('Response time is acceptable', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.response.to.have.header('Content-Type');",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON with detail field', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('detail');",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches conflict error', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('A user with this email already exists');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Register Duplicate Email (409)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Registering with an email that already exists must return 409 Conflict.\nRun 'Register' first (or twice in a row) so the email is already taken, then resend this request with the same email to confirm the 409 path.\n\nAuth: none.\nExpected: 409, body {\"detail\": \"A user with this email already exists\"}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ],
+              "raw": "{{baseUrl}}/auth/register"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('access_token');",
+                  "    pm.expect(jsonData).to.have.property('token_type');",
+                  "});",
+                  "",
+                  "pm.test('Save tokens to environment', function () {",
+                  "    pm.environment.set('accessToken', jsonData.access_token);",
+                  "    if (jsonData.refresh_token) { pm.environment.set('refreshToken', jsonData.refresh_token); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "type": "text",
+                  "value": "{{email}}"
+                },
+                {
+                  "key": "password",
+                  "type": "text",
+                  "value": "{{password}}"
+                }
+              ]
+            },
+            "description": "Logs in a user using OAuth2PasswordRequestForm (application/x-www-form-urlencoded fields 'username' and 'password' - username carries the email). Auth: none.\n\nSuccess: 200 with TokenResponse {access_token, refresh_token, token_type='bearer', expires_in, refresh_expires_in} (exact field names from app/schemas/auth.py TokenResponse).\nErrors: 401 AuthenticationFailedError('Invalid credentials') on bad email/password (raised in AuthService.login, mapped by ApplicationError handler in app/main.py to {'detail': ...} with exc.status_code). 422 if form fields missing.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ],
+              "raw": "{{baseUrl}}/auth/login"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has access_token', function () {",
+                  "    pm.expect(jsonData).to.have.property('access_token');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Google Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"credential\": \"TODO-google-id-token\"\n}"
+            },
+            "description": "Exchanges a Google ID token credential for platform tokens. Auth: none. Body: GoogleLoginRequest {credential: str}.\n\nSuccess: 200 with TokenResponse.\nErrors: 401 GoogleAuthError (subclass of AuthenticationFailedError) if GOOGLE_CLIENT_ID is not configured on the backend, or if Google token verification fails. 422 if credential missing.\nTODO: verify exact Google verification failure message/status in AuthService.verify_google_credential (not fully inspected).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "google"
+              ],
+              "raw": "{{baseUrl}}/auth/google"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has access_token', function () {",
+                  "    pm.expect(jsonData).to.have.property('access_token');",
+                  "});",
+                  "",
+                  "pm.test('Update tokens in environment', function () {",
+                  "    pm.environment.set('accessToken', jsonData.access_token);",
+                  "    if (jsonData.refresh_token) { pm.environment.set('refreshToken', jsonData.refresh_token); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Refresh Token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}"
+            },
+            "description": "Exchanges a refresh token for a new token pair. Auth: none (token supplied in body). Body: RefreshTokenRequest {refresh_token: str}.\n\nSuccess: 200 with TokenResponse.\nErrors: 401 AuthTokenError (subclass of AuthenticationFailedError) if the token has typ != 'refresh', is expired, or invalid (JWTError). 422 if body missing refresh_token.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ],
+              "raw": "{{baseUrl}}/auth/refresh"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('email');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Current User (me)",
+          "request": {
+            "description": "Returns the authenticated user's profile. Auth: required (Bearer access token; get_current_user dependency).\n\nSuccess: 200 with UserResponse {id, email, created_at}.\nErrors: 401 'Invalid token' if token malformed/wrong type, 401 'User not found' if the user id in the token no longer exists (see app/dependencies/auth.py get_current_user).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ],
+              "raw": "{{baseUrl}}/auth/me"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Login Invalid Credentials",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "type": "text",
+                  "value": "nonexistent-{{$randomEmail}}"
+                },
+                {
+                  "key": "password",
+                  "type": "text",
+                  "value": "WrongPassw0rd!"
+                }
+              ]
+            },
+            "description": "Negative test: login with credentials that do not match any user. Expects 401 AuthenticationFailedError('Invalid credentials') per AuthService.login.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ],
+              "raw": "{{baseUrl}}/auth/login"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Register Invalid Password",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"email\": \"{{$randomEmail}}\",\n  \"password\": \"weak\"\n}"
+            },
+            "description": "Negative test: register with a password that fails validate_secure_password (needs length>=6, uppercase, digit, special char). Expects 422 FastAPI validation error.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ],
+              "raw": "{{baseUrl}}/auth/register"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Me Without Token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Negative test: call /auth/me without an Authorization header. FastAPI's OAuth2PasswordBearer will reject the request before get_current_user runs. Expects 401.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ],
+              "raw": "{{baseUrl}}/auth/me"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Authentication"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('user_id');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save projectId to environment', function () {",
+                  "    pm.environment.set('projectId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Project",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Sample Project\",\n  \"description\": \"Created via Postman\"\n}"
+            },
+            "description": "Creates a project owned by the authenticated user. Auth: required. Body: ProjectCreate {name: str, description: str|None}.\n\nSuccess: 201 ProjectResponse {id, name, description, user_id, created_at}.\nErrors: 401 no/invalid token, 422 missing name.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                ""
+              ],
+              "raw": "{{baseUrl}}/projects/"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('user_id');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Project",
+          "request": {
+            "description": "Gets a single project owned by the current user. Auth: required (get_owned_project dependency scopes by user_id).\n\nSuccess: 200 ProjectResponse.\nErrors: 401 no token, 404 'Project not found' if missing or not owned by the caller.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('user_id');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Update Project",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Updated Project Name\"\n}"
+            },
+            "description": "Updates a project's name. Auth: required. Body: ProjectUpdate {name: str|None, min_length=1, max_length=255}.\n\nSuccess: 200 ProjectResponse.\nErrors: 401, 404 'Project not found', 422 if name violates length constraints.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PATCH",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Projects",
+          "request": {
+            "description": "Lists all projects owned by the current user. Auth: required.\n\nSuccess: 200 with a JSON array of ProjectResponse.\nErrors: 401 no token.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                ""
+              ],
+              "raw": "{{baseUrl}}/projects/"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('results');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Retrieve (RAG search) Project Documents",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"query\": \"What does the contract say about termination?\",\n  \"top_k\": 5\n}"
+            },
+            "description": "Runs a RAG retrieval query scoped to the project's embedded document chunks. Auth: required. Body: RetrievalRequest {query: str, top_k: int=5}.\n\nSuccess: 200 RetrievalResponse {results: [{document_name, document_id, chunk_id, chunk_index, score, text}]}.\nErrors: 401, 404 'Project not found'. TODO: verify behavior when project has no embedded documents (likely 200 with empty results array, not an error).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "retrieve"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/retrieve"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Project not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Project",
+          "request": {
+            "description": "Negative test: request a project id that does not exist / is not owned by the caller. Expects 404 'Project not found' (get_owned_project dependency).\n\nConfirmed 404 detail message from source: \"Project not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/projects/999999999"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Create Project Without Token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Should Fail\"\n}"
+            },
+            "description": "Negative test: create a project without an Authorization header. Expects 401 (OAuth2PasswordBearer rejects missing token before get_current_user).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                ""
+              ],
+              "raw": "{{baseUrl}}/projects/"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Projects"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('title');",
+                  "    pm.expect(jsonData).to.have.property('agent_name');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save chatId to environment', function () {",
+                  "    pm.environment.set('chatId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Chat",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"title\": \"New Chat\",\n  \"agent_name\": \"assistant\"\n}"
+            },
+            "description": "Creates a chat under a project. Auth: required. Body: ChatCreate {title: str, agent_name: AgentType enum default 'assistant' - one of assistant, base, coding, project, research, workspace}.\n\nSuccess: 201 ChatResponse {id, project_id, title, agent_name, created_at}.\nErrors: 401, 404 'Project not found' (get_owned_project), 422 invalid agent_name/missing title.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "chats"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/chats"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('title');",
+                  "    pm.expect(jsonData).to.have.property('agent_name');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Chat",
+          "request": {
+            "description": "Gets a single chat owned by the current user. Auth: required (get_owned_chat).\n\nSuccess: 200 ChatResponse.\nErrors: 401, 404 if not found/not owned (TODO: verify exact detail text in get_owned_chat, not fully inspected).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('title');",
+                  "    pm.expect(jsonData).to.have.property('agent_name');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Update Chat",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"title\": \"Renamed Chat\"\n}"
+            },
+            "description": "Updates a chat's title. Auth: required. Body: ChatUpdate {title: str|None, min_length=1, max_length=255}.\n\nSuccess: 200 ChatResponse.\nErrors: 401, 404, 422 invalid title length.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PATCH",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Project Chats",
+          "request": {
+            "description": "Lists all chats for a project belonging to the current user. Auth: required.\n\nSuccess: 200 array of ChatResponse.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "chats"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/chats"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Chat not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Chat",
+          "request": {
+            "description": "Negative test: fetch a chat id that does not exist / is not owned. Expects 404.\n\nConfirmed 404 detail message from source: \"Chat not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/chats/999999999"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Chats"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Chat Messages",
+          "request": {
+            "description": "Lists messages for a chat. Auth: required.\n\nSuccess: 200 array of MessageResponse {id, chat_id, role, content, created_at, sources[], provider_used, model_used, fallback_used}.\nErrors: 401, 404 'Chat not found' (via get_owned_chat).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}",
+                "messages"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}/messages"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response is an array of two messages', function () {",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    pm.expect(jsonData.length).to.eql(2);",
+                  "});",
+                  "",
+                  "pm.test('Messages have required fields', function () {",
+                  "    jsonData.forEach(function (m) {",
+                  "        pm.expect(m).to.have.property('id');",
+                  "        pm.expect(m).to.have.property('chat_id');",
+                  "        pm.expect(m).to.have.property('role');",
+                  "        pm.expect(m).to.have.property('content');",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('Save messageId to environment', function () {",
+                  "    if (jsonData[1] && jsonData[1].id) { pm.environment.set('messageId', jsonData[1].id); }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Message",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"content\": \"Hello, summarize the uploaded document.\",\n  \"agent_name\": \"assistant\"\n}"
+            },
+            "description": "Sends a user message and synchronously receives the generated assistant reply. Auth: required. Body: MessageCreate {content: str, agent_name: AgentType|None}.\n\nSuccess: 201 with an array of two MessageResponse objects: [user_message, assistant_message] (see chats.py returning [user_msg, assistant_msg]).\nErrors: 401, 404 'Chat not found', 422 invalid agent_name, and any ApplicationError raised by ChatService (e.g. provider errors) mapped to its own status_code by the global handler. TODO: verify exact ChatService.create_message error paths (not fully inspected).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}",
+                "messages"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}/messages"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is text/event-stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Message (Streaming)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"content\": \"Stream a response please.\",\n  \"agent_name\": \"assistant\"\n}"
+            },
+            "description": "Same as Create Message but returns a text/event-stream StreamingResponse (Server-Sent Events) instead of a JSON body. Auth: required. Body: MessageCreate.\n\nSuccess: 200 with Content-Type text/event-stream, streamed chunks (format defined by ChatService.create_message_stream - TODO: verify exact SSE event/data framing, not fully inspected).\nErrors: same as Create Message. Note: Postman may buffer the whole stream before completing the test; response body will contain the full SSE payload as raw text.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}",
+                "messages",
+                "stream"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}/messages/stream"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('chat_id');",
+                  "    pm.expect(jsonData).to.have.property('role');",
+                  "    pm.expect(jsonData).to.have.property('content');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Regenerate Message",
+          "request": {
+            "description": "Regenerates an assistant reply for a given message id. Auth: required.\n\nSuccess: 201 MessageResponse.\nErrors: 401, 404 ResourceNotFoundError('Assistant message not found') or ('Chat not found') mapped by ApplicationError handler, 409 ResourceConflictError raised by ChatService.regenerate_message under some conflict condition (TODO: verify exact trigger - only partially inspected around app/services/chat.py line 300-310).",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "messages",
+                "{{messageId}}",
+                "regenerate"
+              ],
+              "raw": "{{baseUrl}}/messages/{{messageId}}/regenerate"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Create Message Without Token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"content\": \"Should fail without auth\"\n}"
+            },
+            "description": "Negative test: create a message without Authorization header. Expects 401.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}",
+                "messages"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}/messages"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Assistant message not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Regenerate Nonexistent Message",
+          "request": {
+            "description": "Negative test: regenerate a message id that does not exist. Expects 404 ResourceNotFoundError('Assistant message not found') per app/services/chat.py.\n\nConfirmed: regenerate_message has no get_owned_* dependency; it looks up the message directly via ChatService.regenerate_message and raises ResourceNotFoundError(\"Assistant message not found\") (see app/services/chat.py) -> 404 via the global ApplicationError handler. Also note: regenerating the assistant's message that has no prior user message returns 409 ResourceConflictError(\"No user message is available to regenerate from.\").",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "messages",
+                "999999999",
+                "regenerate"
+              ],
+              "raw": "{{baseUrl}}/messages/999999999/regenerate"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Messages"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Project Documents",
+          "request": {
+            "description": "Lists documents uploaded to a project. Auth: required.\n\nSuccess: 200 array of DocumentResponse {id, project_id, filename, filepath, mime_type, file_size, status, embedding_status, embedding_provider, embedding_model, embedding_dimensions, embeddings_updated_at, processing_error, text, created_at, updated_at}.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "documents"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/documents"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('filename');",
+                  "    pm.expect(jsonData).to.have.property('mime_type');",
+                  "    pm.expect(jsonData).to.have.property('file_size');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});",
+                  "",
+                  "pm.test('Save documentId to environment', function () {",
+                  "    pm.environment.set('documentId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Upload Document",
+          "request": {
+            "body": {
+              "formdata": [
+                {
+                  "key": "file",
+                  "src": "{{uploadedFile}}",
+                  "type": "file"
+                }
+              ],
+              "mode": "formdata"
+            },
+            "description": "Uploads a document file to a project (multipart/form-data, field name 'file' per UploadFile = File(...)). Auth: required.\n\nAllowed extensions (app/core/constants.py ALLOWED_EXTENSIONS): .pdf, .docx, .txt, .md, .markdown, .csv, .json, .log, .yaml, .yml.\nAllowed content types (ALLOWED_CONTENT_TYPES): application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain, text/markdown, text/x-markdown, text/csv, application/json, text/json, application/x-yaml, text/yaml, text/x-yaml, text/x-log.\nMax upload size (MAX_UPLOAD_SIZE): 10 MB (10 * 1024 * 1024 bytes).\n\nSuccess: 201 DocumentResponse.\nErrors: 401, 404 'Project not found', 413 'File is too large.' if content exceeds 10MB, 400 'Unsupported file extension.' or 'Unsupported file type.' for disallowed extension/mime type.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "documents"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/documents"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('embedding_status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Process Document",
+          "request": {
+            "description": "Enqueues text extraction/processing for a document (background job). Auth: required.\n\nSuccess: 202 Accepted, DocumentProcessingResponse {id, status, celery_task_id, processing_started_at, processing_finished_at, processing_duration_ms, processing_error, embedding_status, chunk_count}.\nErrors: 401, 404 'Document not found'. TODO: verify behavior if called while already processing (may be a no-op or conflict - not fully inspected).",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "process"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/process"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Cancel Document Processing",
+          "request": {
+            "description": "Cancels an in-progress document processing job. Auth: required.\n\nSuccess: 202 Accepted, DocumentProcessingResponse.\nErrors: 401, 404 'Document not found'. TODO: verify behavior when nothing is running to cancel.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "process",
+                "cancel"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/process/cancel"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Retry Document Processing",
+          "request": {
+            "description": "Retries a failed/cancelled document processing job. Auth: required.\n\nSuccess: 202 Accepted, DocumentProcessingResponse.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "process",
+                "retry"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/process/retry"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('filename');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Document",
+          "request": {
+            "description": "Gets a single document. Auth: required (get_owned_document).\n\nSuccess: 200 DocumentResponse.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Document Chunks",
+          "request": {
+            "description": "Lists text chunks generated for a document. Auth: required.\n\nSuccess: 200 array of DocumentChunkResponse {id, document_id, chunk_index, text, token_count, created_at, updated_at}.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "chunks"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/chunks"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400 (bad extension) or 413 (too large)', function () {",
+                  "    pm.expect([400, 413]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Upload Oversized/Unsupported File",
+          "request": {
+            "body": {
+              "formdata": [
+                {
+                  "key": "file",
+                  "src": "{{invalidUploadFile}}",
+                  "type": "file"
+                }
+              ],
+              "mode": "formdata"
+            },
+            "description": "Uploads a file that should be rejected by DocumentService.upload (app/services/document.py). Confirmed from source: unsupported extension -> 400 Bad Request ('Unsupported file extension.'); file over MAX_UPLOAD_SIZE (10 MB) -> 413 Request Entity Too Large ('File is too large.'). Allowed extensions: .pdf .docx .txt .md .markdown .csv .json (see ALLOWED_EXTENSIONS in app/core/constants.py).\n\nIMPORTANT: set {{invalidUploadFile}} to a DIFFERENT file than {{uploadedFile}} -- e.g. a file with an unsupported extension (.exe, .zip) or one larger than 10MB. Reusing {{uploadedFile}} here will incorrectly succeed with 201 since that file is expected to be valid.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "documents"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/documents"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Document not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Document",
+          "request": {
+            "description": "Negative test: fetch a document id that does not exist / is not owned. Expects 404 'Document not found'.\n\nConfirmed 404 detail message from source: \"Document not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/documents/999999999"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Documents"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Rebuild Document Embeddings",
+          "request": {
+            "description": "Enqueues (or runs via BackgroundTasks) a rebuild of embeddings for a document. Auth: required.\n\nSuccess: 202 Accepted. Response schema not modeled via response_model in the route (returns whatever EmbeddingJobService.rebuild_document returns) - TODO: verify exact response body shape.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "embeddings",
+                "rebuild"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/embeddings/rebuild"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Sync Project Embeddings",
+          "request": {
+            "description": "Enqueues an embeddings sync across all of a project's documents. Auth: required.\n\nSuccess: 202 Accepted. TODO: verify exact response body shape (no response_model declared).",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "embeddings",
+                "sync"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/embeddings/sync"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Cancel Document Embedding Rebuild",
+          "request": {
+            "description": "Cancels an in-progress document embedding rebuild job. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "embeddings",
+                "rebuild",
+                "cancel"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/embeddings/rebuild/cancel"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Resume Document Embedding Rebuild",
+          "request": {
+            "description": "Resumes a previously cancelled/paused document embedding rebuild. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "embeddings",
+                "rebuild",
+                "resume"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/embeddings/rebuild/resume"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Retry Document Embedding Rebuild",
+          "request": {
+            "description": "Retries a failed document embedding rebuild. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}",
+                "embeddings",
+                "rebuild",
+                "retry"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}/embeddings/rebuild/retry"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Cancel Project Embedding Sync",
+          "request": {
+            "description": "Cancels an in-progress project embedding sync. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "embeddings",
+                "sync",
+                "cancel"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/embeddings/sync/cancel"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Resume Project Embedding Sync",
+          "request": {
+            "description": "Resumes a previously cancelled/paused project embedding sync. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "embeddings",
+                "sync",
+                "resume"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/embeddings/sync/resume"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Retry Project Embedding Sync",
+          "request": {
+            "description": "Retries a failed project embedding sync. Auth: required.\n\nSuccess: 202 Accepted.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "embeddings",
+                "sync",
+                "retry"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/embeddings/sync/retry"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Project Embedding Sync Status",
+          "request": {
+            "description": "Returns the current embedding sync status for a project (no request body). Auth: required.\n\nSuccess: 200 with a status payload from EmbeddingJobService.project_sync_status (no response_model declared) - TODO: verify exact field names.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "embeddings",
+                "sync"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/embeddings/sync"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Document Processing"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('chat');",
+                  "    pm.expect(jsonData).to.have.property('embeddings');",
+                  "    pm.expect(jsonData).to.have.property('current');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Providers",
+          "request": {
+            "description": "Lists available chat and embedding providers with health/status info plus the current active configuration. Auth: required.\n\nSuccess: 200 ProvidersResponse {chat: [ProviderStatus], embeddings: [ProviderStatus], current: ProviderConfigResponse}. ProviderStatus: {name, kind, active, default_model, base_url, api_key_configured, supports_api_key, supports_health_check}.\nErrors: 401.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers"
+              ],
+              "raw": "{{baseUrl}}/providers"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('chat');",
+                  "    pm.expect(jsonData).to.have.property('embeddings');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Provider Config",
+          "request": {
+            "description": "Gets the currently active chat and embedding provider configuration. Auth: required.\n\nSuccess: 200 ProviderConfigResponse {chat: ChatProviderConfigResponse, embeddings: EmbeddingProviderConfigResponse}.\nErrors: 401.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "config"
+              ],
+              "raw": "{{baseUrl}}/providers/config"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('provider');",
+                  "    pm.expect(jsonData).to.have.property('model');",
+                  "    pm.expect(jsonData).to.have.property('base_url');",
+                  "    pm.expect(jsonData).to.have.property('api_key_configured');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Update Chat Provider Defaults",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"provider\": \"ollama\",\n  \"model\": \"gemma2:2b\",\n  \"fallback_model\": \"llama3.2:3b\",\n  \"base_url\": \"http://localhost:11434\",\n  \"api_key\": \"\"\n}"
+            },
+            "description": "Updates default chat provider settings. Auth: required. Body: ChatProviderConfigUpdate {provider: ChatProvider enum (ollama|gemini|openrouter|groq) | None, model, fallback_model, base_url, api_key - all optional}.\n\nSuccess: 200 ChatProviderConfigResponse {provider, model, fallback_model, base_url, api_key_configured}.\nErrors: 401, 400 InvalidProviderConfigurationError if settings are invalid (mapped via ApplicationError handler), 422 invalid enum value.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PATCH",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "chat",
+                "defaults"
+              ],
+              "raw": "{{baseUrl}}/providers/chat/defaults"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('provider');",
+                  "    pm.expect(jsonData).to.have.property('model');",
+                  "    pm.expect(jsonData).to.have.property('dimensions');",
+                  "    pm.expect(jsonData).to.have.property('base_url');",
+                  "    pm.expect(jsonData).to.have.property('api_key_configured');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Update Embedding Provider Defaults",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"provider\": \"ollama\",\n  \"model\": \"nomic-embed-text\",\n  \"dimensions\": 768,\n  \"base_url\": \"http://localhost:11434\",\n  \"api_key\": \"\"\n}"
+            },
+            "description": "Updates default embedding provider settings. Auth: required. Body: EmbeddingProviderConfigUpdate {provider: EmbeddingProvider enum (ollama|gemini|openrouter) | None, model, dimensions, base_url, api_key - all optional}.\n\nSuccess: 200 EmbeddingProviderConfigResponse {provider, model, dimensions, base_url, api_key_configured}.\nErrors: 401, 400 InvalidProviderConfigurationError, 422 invalid enum value.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PATCH",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "embeddings",
+                "defaults"
+              ],
+              "raw": "{{baseUrl}}/providers/embeddings/defaults"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('provider');",
+                  "    pm.expect(jsonData).to.have.property('kind');",
+                  "    pm.expect(jsonData).to.have.property('model');",
+                  "    pm.expect(jsonData).to.have.property('healthy');",
+                  "    pm.expect(jsonData).to.have.property('message');",
+                  "    pm.expect(jsonData).to.have.property('latency_ms');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Check Chat Provider Health",
+          "request": {
+            "description": "Runs a live health check against a chat provider. Auth: required. Path param 'provider' must be a valid ChatProvider enum value (ollama, gemini, openrouter, groq). Optional query param 'model'.\n\nSuccess: 200 ProviderHealthResponse {provider, kind, model, healthy, message, latency_ms}.\nErrors: 401, 422 if provider path segment is not a valid enum value.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "chat",
+                "ollama",
+                "health"
+              ],
+              "query": [
+                {
+                  "disabled": true,
+                  "key": "model",
+                  "value": ""
+                }
+              ],
+              "raw": "{{baseUrl}}/providers/chat/ollama/health?model="
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('provider');",
+                  "    pm.expect(jsonData).to.have.property('kind');",
+                  "    pm.expect(jsonData).to.have.property('model');",
+                  "    pm.expect(jsonData).to.have.property('healthy');",
+                  "    pm.expect(jsonData).to.have.property('message');",
+                  "    pm.expect(jsonData).to.have.property('latency_ms');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Check Embedding Provider Health",
+          "request": {
+            "description": "Runs a live health check against an embedding provider. Auth: required. Path param 'provider' must be a valid EmbeddingProvider enum value (ollama, gemini, openrouter). Optional query params 'model', 'dimensions'.\n\nSuccess: 200 ProviderHealthResponse.\nErrors: 401, 422 if provider path segment invalid.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "embeddings",
+                "ollama",
+                "health"
+              ],
+              "query": [
+                {
+                  "disabled": true,
+                  "key": "model",
+                  "value": ""
+                },
+                {
+                  "disabled": true,
+                  "key": "dimensions",
+                  "value": ""
+                }
+              ],
+              "raw": "{{baseUrl}}/providers/embeddings/ollama/health?model=&dimensions="
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Check Health Invalid Provider",
+          "request": {
+            "description": "Negative test: request health check for a provider name that is not a valid ChatProvider enum value. FastAPI path validation should reject this. Expects 422.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "providers",
+                "chat",
+                "not-a-real-provider",
+                "health"
+              ],
+              "raw": "{{baseUrl}}/providers/chat/not-a-real-provider/health"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "AI Providers"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save workflowId to environment', function () {",
+                  "    pm.environment.set('workflowId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Workflow",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Sample Workflow\"\n}"
+            },
+            "description": "Creates a workflow template under a project. Auth: required. Body: WorkflowCreate {name: str}.\n\nSuccess: 201 WorkflowResponse {id, project_id, name, status (WorkflowRunStatus enum), created_at}.\nErrors: 401, 404 'Project not found', 422 missing name.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "workflows"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/workflows"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Workflow",
+          "request": {
+            "description": "Gets a single workflow owned (via project ownership) by the current user. Auth: required (get_owned_workflow).\n\nSuccess: 200 WorkflowResponse.\nErrors: 401, 404 if not found/owned (TODO: verify exact detail text, get_owned_workflow not fully inspected).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('project_id');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Update Workflow",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Renamed Workflow\"\n}"
+            },
+            "description": "Updates a workflow's name. Auth: required. Body: WorkflowUpdate {name: str|None, min_length=1, max_length=255}.\n\nSuccess: 200 WorkflowResponse.\nErrors: 401, 404, 422 invalid name length.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "PATCH",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Project Workflows",
+          "request": {
+            "description": "Lists all workflows for a project. Auth: required.\n\nSuccess: 200 array of WorkflowResponse.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "workflows"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}/workflows"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('step_order');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('prompt_template');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save workflowStepId to environment', function () {",
+                  "    pm.environment.set('workflowStepId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Create Workflow Step",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"step_order\": 1,\n  \"name\": \"Extract Requirements\",\n  \"prompt_template\": \"Extract requirements from: {{input}}\",\n  \"depends_on\": [],\n  \"condition\": null\n}"
+            },
+            "description": "Creates an ordered step for a workflow (steps can form a DAG via depends_on). Auth: required. Body: WorkflowStepCreate {step_order: int, name: str, prompt_template: str, depends_on: list[int]|None=[], condition: str|None}.\n\nSuccess: 201 WorkflowStepResponse {id, workflow_id, step_order, name, prompt_template, depends_on, condition, created_at}.\nErrors: 401, 404 'Workflow not found' (TODO: verify exact message), 422 missing required fields.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "steps"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/steps"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('step_order');",
+                  "    pm.expect(jsonData).to.have.property('name');",
+                  "    pm.expect(jsonData).to.have.property('prompt_template');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Workflow Step",
+          "request": {
+            "description": "Gets a single workflow step. Auth: required (get_owned_workflow_step).\n\nSuccess: 200 WorkflowStepResponse.\nErrors: 401, 404 if not found/owned.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "steps",
+                "{{workflowStepId}}"
+              ],
+              "raw": "{{baseUrl}}/steps/{{workflowStepId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Workflow Steps",
+          "request": {
+            "description": "Lists all steps for a workflow. Auth: required.\n\nSuccess: 200 array of WorkflowStepResponse.\nErrors: 401, 404 'Workflow not found'.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "steps"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/steps"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('input');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save workflowRunId to environment', function () {",
+                  "    pm.environment.set('workflowRunId', jsonData.id);",
+                  "    pm.environment.set('executionId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Run Workflow",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"input\": \"Kick off the workflow with this input text.\"\n}"
+            },
+            "description": "Enqueues a workflow run (creates a WorkflowRun and schedules a background job). Auth: required. Body: WorkflowRunRequest {input: str}.\n\nSuccess: 202 Accepted, WorkflowRunResponse {id, workflow_id, input, output, status, celery_task_id, error, created_at}.\nErrors: 401, 404 'Workflow not found', 422 missing input.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "run"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/run"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "pm.test('Content-Type is text/event-stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Run Workflow (Streaming)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"input\": \"Stream this workflow run.\"\n}"
+            },
+            "description": "\nSuccess: 200 streamed SSE events from WorkflowService.run_workflow_stream_until_disconnected.\nErrors: 404 'Workflow not found', 422 missing input.\n\nConfirmed: this route requires auth. It depends on get_owned_workflow, which itself depends on get_current_user (see app/dependencies/workflow.py) — so a valid Bearer token is required and ownership of the workflow's project is enforced, same as the non-streaming Run Workflow endpoint.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}",
+                "runs",
+                "stream"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/runs/stream"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Workflow not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Workflow",
+          "request": {
+            "description": "Negative test: fetch a workflow id that does not exist / is not owned. Expects 404.\n\nConfirmed 404 detail message from source: \"Workflow not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/workflows/999999999"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Workflow Templates"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('items');",
+                  "    pm.expect(jsonData).to.have.property('total');",
+                  "    pm.expect(jsonData).to.have.property('page');",
+                  "    pm.expect(jsonData).to.have.property('page_size');",
+                  "    pm.expect(jsonData).to.have.property('total_pages');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "List Workflow Runs",
+          "request": {
+            "description": "Lists workflow runs for the current user with pagination and optional filters. Auth: required. Query params: page (int, default 1, >=1), page_size (int, default 20, 1-100), status (alias for status_filter, WorkflowRunStatus enum: pending|running|completed|failed|paused|canceled), project_id (int, >=1).\n\nSuccess: 200 WorkflowRunListResponse {items: [WorkflowRunResponse], total, page, page_size, total_pages}.\nErrors: 401, 422 invalid query params (e.g. page < 1, invalid status value, project_id < 1).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                },
+                {
+                  "disabled": true,
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "disabled": true,
+                  "key": "project_id",
+                  "value": "{{projectId}}"
+                }
+              ],
+              "raw": "{{baseUrl}}/runs?page=1&page_size=20&status=&project_id={{projectId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('input');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Workflow Run",
+          "request": {
+            "description": "Gets a single workflow run owned by the current user. Auth: required (get_owned_workflow_run).\n\nSuccess: 200 WorkflowRunResponse.\nErrors: 401, 404 if not found/owned (TODO: verify exact detail text, get_owned_workflow_run not fully inspected).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202 (resumed) or 409 (already left the resumable state)', function () {",
+                  "    pm.expect([202, 409]).to.include(pm.response.code);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "if (pm.response.code === 202) {",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Resume Workflow Run",
+          "request": {
+            "description": "Resumes a paused workflow run (enqueues continuation). Auth: required.\n\nSuccess: 202 Accepted WorkflowRunResponse.\nErrors: 401, 404. TODO: verify behavior when run is not in a resumable state (may be a no-op or 409 - not fully inspected).\n\nNote: this endpoint can legitimately return 409 instead of 202 if the run has already moved out of a resumable state by the time this request executes (e.g. a background Celery worker already retried it) -- this is timing-dependent, not a bug. Both codes are accepted.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "resume"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/resume"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Retry Workflow Run",
+          "request": {
+            "description": "Retries a failed workflow run. Auth: required.\n\nSuccess: 202 Accepted WorkflowRunResponse.\nErrors: 401, 404. TODO: verify behavior when run is not in a retryable state.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "retry"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/retry"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 (canceled) or 409 (already left a cancelable state)', function () {",
+                  "    pm.expect([200, 409]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Cancel Workflow Run",
+          "request": {
+            "description": "Cancels a running/pending workflow run. Auth: required.\n\nSuccess: 200 WorkflowRunResponse (note: unlike resume/retry this route has no explicit status_code override, so it returns FastAPI's default 200).\nErrors: 401, 404.\n\nNote: 409 is also accepted -- the run may have already left a cancelable state by the time this executes (timing-dependent on the background Celery worker), not a bug.",
+            "header": [],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "cancel"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/cancel"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Workflow Run Events",
+          "request": {
+            "description": "Lists all events recorded for a workflow run. Auth: required. Note (from source comments): no pagination is currently implemented; this could be expensive for runs with 10,000+ events.\n\nSuccess: 200 array of WorkflowEventResponse {id, workflow_run_id, event_type, payload, created_at}.\nErrors: 401, 404.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "events"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/events"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is text/event-stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Stream Workflow Run Events",
+          "request": {
+            "description": "Streams events for a workflow run as Server-Sent Events. Auth: required. Replays events already stored for the run, then polls the DB (~1s) for new rows until a terminal event (completed/failed/cancelled) or client disconnect. Works for runs executed via the Celery worker, unlike POST /workflows/{workflow_id}/runs/stream.\n\nSuccess: 200 text/event-stream.\nErrors: 401, 404.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}",
+                "stream"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}/stream"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Workflow run not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Workflow Run",
+          "request": {
+            "description": "Negative test: fetch a workflow run id that does not exist / is not owned. Expects 404.\n\nConfirmed 404 detail message from source: \"Workflow run not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/runs/999999999"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - List Workflow Runs Invalid Page",
+          "request": {
+            "description": "Negative test: page=0 violates Query(1, ge=1) constraint on the page parameter. Expects 422.",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                }
+              ],
+              "raw": "{{baseUrl}}/runs?page=0"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Workflow Runs"
+    },
+    {
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('goal');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});",
+                  "",
+                  "pm.test('Save agentRunId to environment', function () {",
+                  "    pm.environment.set('agentRunId', jsonData.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Run Agent (Create Agent Run)",
+          "request": {
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"goal\": \"Research competitor pricing and summarize findings.\"\n}"
+            },
+            "description": "Creates and executes an autonomous agent run against a workflow. Auth: none explicit at the route level (relies on get_owned_workflow to scope the workflow to the caller's project - TODO: verify get_owned_workflow requires get_current_user internally; not fully inspected in this pass, but consistent with other owned-resource dependencies which do require auth). Body: AgentRunCreate {goal: str}.\n\nSuccess: 201 AgentRunResponse {id, workflow_id, goal, status (AgentRunStatus: pending|running|completed|failed|paused), result, created_at}.\nErrors: 404 'Workflow not found' if workflow_id path/ownership check fails, 422 missing goal.\n\nIMPORTANT (confirmed against running server): the route is POST /agent_runs/ with NO {workflow_id} path segment, but the endpoint depends on OwnedWorkflowDep, whose workflow_id parameter is therefore read from the QUERY STRING, not the body. Body only needs {\"goal\": ...}. Run this after 'Workflow Templates / Create Workflow' so {{workflowId}} is populated.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "method": "POST",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent_runs",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "workflow_id",
+                  "value": "{{workflowId}}"
+                }
+              ],
+              "raw": "{{baseUrl}}/agent_runs/?workflow_id={{workflowId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('workflow_id');",
+                  "    pm.expect(jsonData).to.have.property('goal');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData).to.have.property('created_at');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Get Agent Run",
+          "request": {
+            "description": "Gets a single agent run. Auth: required (get_owned_agent_run).\n\nSuccess: 200 AgentRunResponse.\nErrors: 401/404 if not found/owned (TODO: verify exact status/detail text, get_owned_agent_run not fully inspected).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent_runs",
+                "{{agentRunId}}"
+              ],
+              "raw": "{{baseUrl}}/agent_runs/{{agentRunId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 404', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('Detail message matches expected 404 text', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.detail).to.eql('Agent run not found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Negative - Get Nonexistent Agent Run",
+          "request": {
+            "description": "Negative test: fetch an agent run id that does not exist / is not owned. Expects 404 (TODO: verify - based on the pattern used by other get_owned_* dependencies in this codebase).\n\nConfirmed 404 detail message from source: \"Agent run not found\" (see app/dependencies/*.py get_owned_* dependency).",
+            "header": [],
+            "method": "GET",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent_runs",
+                "999999999"
+              ],
+              "raw": "{{baseUrl}}/agent_runs/999999999"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Executions"
+    },
+    {
+      "description": "Destructive deletes, deliberately run LAST so earlier folders (Chats, Messages, Documents, Workflow Templates/Runs) can still use {{projectId}}/{{chatId}}/etc while those resources are alive. Order matters: leaf resources (workflow steps/runs, documents, chats) are deleted before their parents (workflow, project) to exercise each DELETE endpoint individually rather than relying on cascade deletes.",
+      "item": [
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Workflow Step",
+          "request": {
+            "description": "Deletes a workflow step. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "steps",
+                "{{workflowStepId}}"
+              ],
+              "raw": "{{baseUrl}}/steps/{{workflowStepId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Workflow",
+          "request": {
+            "description": "Deletes a workflow template. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "workflows",
+                "{{workflowId}}"
+              ],
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Workflow Run",
+          "request": {
+            "description": "Deletes a single workflow run. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "{{workflowRunId}}"
+              ],
+              "raw": "{{baseUrl}}/runs/{{workflowRunId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is application/json', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "",
+                  "pm.test('Response is valid JSON', function () {",
+                  "    pm.response.to.have.jsonBody();",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Response has required fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('deleted');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Canceled Workflow Runs",
+          "request": {
+            "description": "Bulk-deletes all canceled workflow runs for the current user, optionally scoped to a project. Auth: required. Query param: project_id (int, >=1, optional).\n\nSuccess: 200 WorkflowRunBulkDeleteResponse {deleted: int}.\nErrors: 401, 422 invalid project_id.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "runs",
+                "canceled"
+              ],
+              "query": [
+                {
+                  "disabled": true,
+                  "key": "project_id",
+                  "value": "{{projectId}}"
+                }
+              ],
+              "raw": "{{baseUrl}}/runs/canceled?project_id={{projectId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Document",
+          "request": {
+            "description": "Deletes a document. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404 'Document not found'.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "documents",
+                "{{documentId}}"
+              ],
+              "raw": "{{baseUrl}}/documents/{{documentId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Chat",
+          "request": {
+            "description": "Deletes a chat. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "chats",
+                "{{chatId}}"
+              ],
+              "raw": "{{baseUrl}}/chats/{{chatId}}"
+            }
+          },
+          "response": []
+        },
+        {
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "",
+                  "pm.test('Response time is less than 2000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "name": "Delete Project",
+          "request": {
+            "description": "Deletes a project owned by the current user. Auth: required.\n\nSuccess: 204 No Content.\nErrors: 401, 404 'Project not found'.",
+            "header": [],
+            "method": "DELETE",
+            "url": {
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ],
+              "raw": "{{baseUrl}}/projects/{{projectId}}"
+            }
+          },
+          "response": []
+        }
+      ],
+      "name": "Cleanup"
+    }
+  ],
+  "variable": []
+}
