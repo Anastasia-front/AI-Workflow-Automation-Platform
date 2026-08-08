@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import BaseAgent
@@ -7,14 +8,14 @@ from app.core import (
     DELEGATION_FAILURE_PHRASES,
     DOCUMENT_LIST_TERMS,
     DOCUMENT_REFERENCE_TERMS,
+    settings,
 )
-from app.enums import DocumentStatus
-from app.models import Project
 from app.prompts import RAGPromptBuilder
 from app.repositories import DocumentRepository
 from app.services.ai import AIService
 from app.services.rag import RAGService
-from app.services.workspace_tools import WorkspaceToolRegistry
+from app.services.workspace_tool_specs import WORKSPACE_TOOL_SPECS
+from app.services.workspace_tools import ToolResult, WorkspaceToolRegistry
 
 
 class AgentService:
@@ -123,126 +124,109 @@ class AgentService:
         user_id: int,
         question: str,
     ) -> str | None:
-        normalized = question.lower()
+        """Let the model pick and call workspace tools directly, instead of
+        matching keywords in `question`.
 
-        if self._is_embedding_update_request(normalized):
-            result = await self.workspace_tools.update_files_for_embedding_model(
-                db,
-                project_id=project_id,
-            )
-            return self._format_embedding_update_result(result.data)
+        Each turn: ask the model for either a final answer or a tool call: if it calls
+        a tool, validate the arguments against that tool's Pydantic schema; invalid
+        arguments are reported back to the model as a tool result (up to
+        WORKSPACE_TOOL_ARGUMENT_MAX_RETRIES times) so it can retry with corrected
+        arguments -- the "structured output + retry" pattern applied to tool calls
+        instead of a bare JSON response. Returns None (deferring to the normal RAG
+        chat path) if the model never calls a workspace tool at all, so this only
+        intercepts requests that are actually workspace-management tasks.
+        """
+        schemas = [spec.to_schema() for spec in WORKSPACE_TOOL_SPECS]
+        specs_by_name = {spec.name: spec for spec in WORKSPACE_TOOL_SPECS}
+        system_prompt = self._workspace_tool_system_prompt()
+        messages: list[dict] = [{"role": "user", "content": question}]
+        context = {"project_id": project_id, "user_id": user_id}
 
-        if "embedding" in normalized and any(
-            term in normalized
-            for term in ("check", "status", "need", "requires", "mismatch")
-        ):
-            result = await self.workspace_tools.check_embedding_rebuild_need(
-                db,
-                project_id=project_id,
+        try:
+            result = await self.ai.generate_tool_call(
+                messages, tools=schemas, system_prompt=system_prompt
             )
-            return self._format_embedding_check_result(result.data)
+        except Exception:  # noqa: BLE001 - no provider could run tool calling; fall back to RAG chat
+            return None
 
-        if any(
-            term in normalized
-            for term in (
-                "process documents",
-                "process uploaded",
-                "process all documents",
-            )
-        ):
-            return await self._process_project_documents(db=db, project_id=project_id)
+        if not result.tool_calls:
+            return None
 
-        if "sync" in normalized and "embedding" in normalized:
-            project = await db.get(Project, project_id)
-            result = await self.workspace_tools.sync_project_embeddings(
-                db, project=project
-            )
-            return self._format_tool_result(result)
+        invalid_argument_attempts = 0
 
-        if "list" in normalized and "workflow" in normalized:
-            result = await self.workspace_tools.list_workflows(
-                db, project_id=project_id
-            )
-            return self._format_workflows(result.data)
+        for _ in range(settings.WORKSPACE_TOOL_MAX_STEPS):
+            tool_call = result.tool_calls[0]
+            spec = specs_by_name.get(tool_call.name)
 
-        if "create" in normalized and "workflow" in normalized:
-            workflow_name = self._workflow_name_from_question(question)
-            created = await self.workspace_tools.create_workflow(
-                db,
-                project_id=project_id,
-                name=workflow_name,
-            )
-            steps = []
-            step_ids_by_order = {}
-            for definition in self._workflow_steps_from_question(question):
-                depends_on = [
-                    step_ids_by_order[order]
-                    for order in definition.get("depends_on_orders", [])
-                    if order in step_ids_by_order
-                ]
-                step = await self.workspace_tools.create_workflow_step(
-                    db,
-                    workflow_id=created.data["id"],
-                    name=definition["name"],
-                    prompt_template=definition["prompt_template"],
-                    step_order=definition["step_order"],
-                    depends_on=depends_on,
+            if spec is None:
+                tool_result = ToolResult(
+                    tool=tool_call.name,
+                    status="invalid_tool",
+                    data={},
+                    message=f"Unknown tool `{tool_call.name}`. Available tools: {', '.join(specs_by_name)}.",
                 )
-                steps.append(step.data)
-                step_ids_by_order[definition["step_order"]] = step.data["id"]
-            step_names = ", ".join(f"`{step['name']}`" for step in steps)
-            return (
-                "Workspace Agent created a workflow.\n\n"
-                f"- Workflow: `{created.data['name']}` (id: {created.data['id']})\n"
-                f"- Steps: {step_names}\n\n"
-                "Run it explicitly with a target document, for example: "
-                "`run workflow Extract invoice fields on invoice.pdf`."
+            else:
+                try:
+                    args = spec.args_model.model_validate(tool_call.arguments)
+                except ValidationError as exc:
+                    invalid_argument_attempts += 1
+                    if invalid_argument_attempts > settings.WORKSPACE_TOOL_ARGUMENT_MAX_RETRIES:
+                        return (
+                            f"Workspace tool `{spec.name}` kept receiving invalid arguments "
+                            f"after {invalid_argument_attempts - 1} retries: {exc.errors()}"
+                        )
+                    tool_result = ToolResult(
+                        tool=spec.name,
+                        status="invalid_arguments",
+                        data={},
+                        message=f"Arguments failed validation: {exc.errors()}. Correct them and call the tool again.",
+                    )
+                else:
+                    invalid_argument_attempts = 0
+                    try:
+                        tool_result = await spec.invoke(self.workspace_tools, db, context, args)
+                    except Exception as exc:  # noqa: BLE001 - surface tool failure to the model, not a crash
+                        tool_result = ToolResult(tool=spec.name, status="failed", data={}, message=str(exc))
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {"id": tool_call.id, "name": tool_call.name, "arguments": tool_call.arguments}
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "content": tool_result.model_dump_json(),
+                }
             )
 
-        if "run" in normalized and "workflow" in normalized:
-            workflows = await self.workspace_tools.list_workflows(
-                db, project_id=project_id
+            result = await self.ai.generate_tool_call(
+                messages, tools=schemas, system_prompt=system_prompt
             )
-            selected = self._select_workflow(question, workflows.data["workflows"])
-            if selected is None:
-                return "I could not identify which workflow to run. Please include the workflow name or id."
-            workflow_input = await self._resolve_workflow_input(
-                db=db,
-                project_id=project_id,
-                question=question,
-            )
-            if isinstance(workflow_input, str):
-                return workflow_input
-            result = await self.workspace_tools.run_workflow(
-                db,
-                workflow_id=selected["id"],
-                user_input=workflow_input["input"],
-            )
-            return (
-                f"Workspace tool `run_workflow` queued workflow `{selected['name']}` "
-                f"for document `{workflow_input['document'].filename}`.\n\n"
-                f"{result.data}"
-            )
+            if not result.tool_calls:
+                return result.content or "Workspace tool call completed with no further response."
 
-        if any(
-            term in normalized
-            for term in ("execution", "workflow run", "failed run", "diagnose")
-        ):
-            workflows = await self.workspace_tools.list_workflows(
-                db, project_id=project_id
-            )
-            lines = ["Workspace execution summary:"]
-            for workflow in workflows.data["workflows"]:
-                runs = await self.workspace_tools.list_workflow_runs(
-                    db,
-                    workflow_id=workflow["id"],
-                    user_id=user_id,
-                )
-                recent = runs.data["runs"][:3]
-                lines.append(f"- `{workflow['name']}`: {recent or 'no runs'}")
-            return "\n".join(lines)
+        return "Reached the workspace tool step limit without a final answer."
 
-        return None
+    def _workspace_tool_system_prompt(self) -> str:
+        return (
+            "You are the Workspace Agent for an AI automation platform project. "
+            "You can call tools to inspect and manage this project's documents, "
+            "embeddings, and workflows. Call a tool whenever the user's request maps "
+            "to one of the available tools -- including multi-step tasks, where you "
+            "should call tools one at a time and use each result to decide the next "
+            "call. If the request is a general question that is not about managing "
+            "this workspace, respond with plain text and no tool call so it can be "
+            "handled by the normal assistant. After your final tool result, give the "
+            "user a concise plain-text summary of what happened instead of calling "
+            "another tool."
+        )
 
     async def _list_project_documents(
         self,
@@ -272,251 +256,6 @@ class AgentService:
             )
 
         return "\n".join(lines), []
-
-    def _is_embedding_update_request(self, normalized: str) -> bool:
-        return (
-            "embedding" in normalized
-            and any(
-                term in normalized
-                for term in ("update", "fit", "new model", "rebuild", "refresh")
-            )
-            and any(
-                term in normalized
-                for term in ("file", "files", "document", "documents")
-            )
-        )
-
-    async def _process_project_documents(
-        self,
-        *,
-        db: AsyncSession,
-        project_id: int,
-    ) -> str:
-        documents = await self.documents.list_for_project(db, project_id)
-        queued = []
-        skipped = []
-        failed = []
-
-        for document in documents:
-            if document.status in (
-                DocumentStatus.INDEXED,
-                DocumentStatus.QUEUED,
-                DocumentStatus.PROCESSING,
-            ):
-                skipped.append(document.filename)
-                continue
-            try:
-                result = await self.workspace_tools.process_document(
-                    db, document=document
-                )
-                if result.status == "queued":
-                    queued.append(result.data)
-                else:
-                    skipped.append(document.filename)
-            except Exception as exc:  # noqa: BLE001 - report tool-level failure
-                failed.append({"filename": document.filename, "error": str(exc)})
-
-        return (
-            "Workspace Agent processed project documents.\n\n"
-            f"- Queued: {len(queued)}\n"
-            f"- Skipped: {len(skipped)}\n"
-            f"- Failed: {len(failed)}\n\n"
-            f"Queued items: {queued or 'none'}\n"
-            f"Skipped files: {skipped or 'none'}\n"
-            f"Failures: {failed or 'none'}"
-        )
-
-    def _format_embedding_update_result(self, data: dict) -> str:
-        return (
-            "Workspace Agent checked the current embedding configuration and queued only required work.\n\n"
-            f"- Provider: `{data['embedding_config']['provider']}`\n"
-            f"- Model: `{data['embedding_config']['model']}`\n"
-            f"- Dimensions: `{data['embedding_config']['dimensions']}`\n"
-            f"- Queued rebuilds: {len(data['queued_rebuilds'])}\n"
-            f"- Already current: {len(data['already_current'])}\n"
-            f"- Active jobs skipped: {len(data['active_jobs'])}\n"
-            f"- Not ready skipped: {len(data['not_ready'])}\n"
-            f"- Failed queue attempts: {len(data['failed'])}\n\n"
-            f"Queued: {self._format_document_items(data['queued_rebuilds'])}\n"
-            f"Already current: {self._format_document_items(data['already_current'])}\n"
-            f"Active jobs: {self._format_document_items(data['active_jobs'])}\n"
-            f"Not ready: {self._format_document_items(data['not_ready'])}\n"
-            f"Failed: {data['failed'] or 'none'}"
-        )
-
-    def _format_embedding_check_result(self, data: dict) -> str:
-        classification = data["classification"]
-        return (
-            "Workspace Agent inspected document embedding metadata.\n\n"
-            f"- Current: {len(classification['current'])}\n"
-            f"- Rebuild required: {len(classification['rebuild_required'])}\n"
-            f"- Missing embeddings: {len(classification['missing_embeddings'])}\n"
-            f"- Failed: {len(classification['failed'])}\n"
-            f"- Unknown metadata: {len(classification['unknown_metadata'])}\n"
-            f"- Active jobs: {len(classification['active_jobs'])}\n"
-            f"- Not ready: {len(classification['not_ready'])}"
-        )
-
-    def _format_tool_result(self, result) -> str:
-        return (
-            f"Workspace tool `{result.tool}` finished with status `{result.status}`.\n\n"
-            f"{result.data}"
-        )
-
-    def _format_workflows(self, data: dict) -> str:
-        workflows = data["workflows"]
-        if not workflows:
-            return "No workflows exist in this project."
-        lines = ["Project workflows:"]
-        for workflow in workflows:
-            lines.append(
-                f"- `{workflow['name']}` (id: {workflow['id']}, status: {workflow['status']})"
-            )
-        return "\n".join(lines)
-
-    def _format_document_items(self, items: list[dict]) -> str:
-        if not items:
-            return "none"
-        return ", ".join(f"`{item.get('filename', item.get('id'))}`" for item in items)
-
-    def _workflow_name_from_question(self, question: str) -> str:
-        normalized = question.strip().rstrip(".")
-        if "workflow that" in normalized.lower():
-            return normalized.lower().split("workflow that", 1)[1].strip().capitalize()
-        if "workflow to" in normalized.lower():
-            return normalized.lower().split("workflow to", 1)[1].strip().capitalize()
-        return "Workspace generated workflow"
-
-    def _workflow_prompt_from_question(self, question: str) -> str:
-        return (
-            "Complete this workflow task using the provided input.\n\n"
-            f"Task: {question}\n\n"
-            "Input:\n{{input}}\n\n"
-            "Return a structured, concise result."
-        )
-
-    def _workflow_steps_from_question(self, question: str) -> list[dict]:
-        normalized = question.lower()
-        if "invoice" in normalized and any(
-            term in normalized for term in ("extract", "field", "fields")
-        ):
-            return [
-                {
-                    "step_order": 1,
-                    "name": "Extract invoice fields",
-                    "prompt_template": (
-                        "You are extracting fields from an invoice document.\n\n"
-                        "Invoice document text:\n{{input}}\n\n"
-                        "Extract the actual values present in the document. "
-                        "Return strict JSON with keys: invoice_number, invoice_date, "
-                        "customer_name, vendor_name, address, city, state, zip, country, "
-                        "order_number, order_date, total_amount, payment_method, due_date, "
-                        "line_items, warnings. Use null when a value is missing. "
-                        "Do not describe a workflow."
-                    ),
-                },
-                {
-                    "step_order": 2,
-                    "name": "Validate invoice fields",
-                    "prompt_template": (
-                        "Validate and clean the extracted invoice JSON.\n\n"
-                        "Original invoice text:\n{{input}}\n\n"
-                        "Previous step outputs:\n{{dependency_outputs}}\n\n"
-                        "Return final JSON with corrected values, confidence notes, "
-                        "and warnings for missing or ambiguous fields. Do not describe a workflow."
-                    ),
-                    "depends_on_orders": [1],
-                },
-            ]
-
-        return [
-            {
-                "step_order": 1,
-                "name": "Analyze input",
-                "prompt_template": self._workflow_prompt_from_question(question),
-            },
-            {
-                "step_order": 2,
-                "name": "Structure output",
-                "prompt_template": (
-                    "Structure the analysis below as strict JSON.\n\n"
-                    f"Task: {question}\n\n"
-                    "Previous step output:\n{{dependency_outputs}}\n\n"
-                    "Return a single JSON object with a \"summary\" key (short plain-text "
-                    "summary of the result) plus whatever additional keys best represent "
-                    "the structured result for this task (for example lists of findings, "
-                    "scores, or recommendations). Return JSON only, no surrounding text."
-                ),
-                "depends_on_orders": [1],
-            },
-        ]
-
-    async def _resolve_workflow_input(
-        self,
-        *,
-        db: AsyncSession,
-        project_id: int,
-        question: str,
-    ) -> dict | str:
-        documents = [
-            document
-            for document in await self.documents.list_for_project(db, project_id)
-            if document.status == DocumentStatus.INDEXED
-            and (document.text or "").strip()
-        ]
-
-        if not documents:
-            return (
-                "I cannot run this workflow yet because no indexed document text is "
-                "available in the project. Upload and process a document first."
-            )
-
-        selected = self._select_document(question, documents)
-        if selected is None:
-            available = ", ".join(f"`{document.filename}`" for document in documents)
-            return (
-                "Which document should I run this workflow on? Available indexed "
-                f"documents: {available}"
-            )
-
-        return {
-            "document": selected,
-            "input": (f"Document filename: {selected.filename}\n\n" f"{selected.text}"),
-        }
-
-    def _select_document(self, question: str, documents: list) -> object | None:
-        normalized = question.lower()
-        for document in documents:
-            filename = document.filename.lower()
-            stem = filename.rsplit(".", 1)[0]
-            if filename in normalized or stem in normalized:
-                return document
-
-        if "invoice" in normalized:
-            invoice_documents = [
-                document
-                for document in documents
-                if "invoice" in document.filename.lower()
-            ]
-            if len(invoice_documents) == 1:
-                return invoice_documents[0]
-
-        if len(documents) == 1:
-            return documents[0]
-
-        return None
-
-    def _select_workflow(self, question: str, workflows: list[dict]) -> dict | None:
-        normalized = question.lower()
-        for workflow in workflows:
-            if (
-                str(workflow["id"]) in normalized
-                or workflow["name"].lower() in normalized
-            ):
-                return workflow
-        if len(workflows) == 1:
-            return workflows[0]
-        return None
 
     def _needs_project_documents(self, question: str, history: list[dict]) -> bool:
         normalized = question.lower()

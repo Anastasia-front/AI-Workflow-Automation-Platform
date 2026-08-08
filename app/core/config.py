@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     PROVIDER_FAILURE_THRESHOLD: int = 3
     PROVIDER_COOLDOWN_SECONDS: int = 60
 
+    WORKSPACE_TOOL_MAX_STEPS: int = 4
+    WORKSPACE_TOOL_ARGUMENT_MAX_RETRIES: int = 2
+
     STORAGE_PROVIDER: str
     AWS_S3_BUCKET: str = "ai-platform-uploads"
     AWS_REGION: str = "eu-central-1"
