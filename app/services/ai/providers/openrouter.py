@@ -3,7 +3,13 @@ import json
 import httpx
 
 from app.core import settings
+from app.services.ai.providers._openai_compat import (
+    from_openai_message,
+    to_openai_messages,
+    to_openai_tool,
+)
 from app.services.ai.providers.base import AIProvider
+from app.services.ai.tool_types import ChatResult, ToolSchema
 
 
 class OpenRouterProvider(AIProvider):
@@ -70,3 +76,29 @@ class OpenRouterProvider(AIProvider):
                     content = data["choices"][0].get("delta", {}).get("content", "")
                     if content:
                         yield content
+
+    async def chat_with_tools(
+        self,
+        *,
+        messages: list[dict],
+        model: str,
+        tools: list[ToolSchema],
+    ) -> ChatResult:
+        async with httpx.AsyncClient(timeout=settings.PROVIDER_REQUEST_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": to_openai_messages(messages),
+                    "tools": [to_openai_tool(tool) for tool in tools],
+                },
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+            return from_openai_message(data["choices"][0]["message"])
