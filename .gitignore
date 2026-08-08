@@ -42,6 +42,13 @@ Thumbs.db
 # project files
 uploads
 
+# Raw (unredacted) newman reports -- contain live Bearer tokens and
+# generated test passwords. Only postman/redact_report.py's output
+# (static/postman-detail-report.html) is safe to commit/publish.
+postman/newman-report.html
+postman-detail-report.raw.html
+newman-report.html
+
 # Terraform state
 .terraform
 *.tfstate
@@ -53,3 +60,7 @@ terraform.tfvars
 
 # crash logs
 crash.log
+
+# MCP server config (contains local DB credentials) and its venv
+.mcp.json
+.mcp-venv/
