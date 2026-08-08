@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.enums import DocumentStatus
 from app.services.agent import AgentService
+from app.services.workspace_tools import ToolResult
 
 
 @pytest.mark.asyncio
@@ -197,27 +197,40 @@ async def test_agent_retries_when_model_asks_user_to_do_delegated_work():
     assert ai.generate_chat_response.await_count == 3
 
 
+def _tool_call_result(name: str, arguments: dict, *, content: str | None = None):
+    from app.services.ai.tool_types import ChatResult, ToolCall
+
+    return ChatResult(content=content, tool_calls=[ToolCall(id="call_1", name=name, arguments=arguments)])
+
+
+def _final_answer_result(content: str):
+    from app.services.ai.tool_types import ChatResult
+
+    return ChatResult(content=content, tool_calls=[])
+
+
 @pytest.mark.asyncio
-async def test_workspace_agent_updates_files_via_workspace_tools():
-    ai = SimpleNamespace(generate_chat_response=AsyncMock())
+async def test_workspace_agent_calls_tool_and_returns_model_final_answer():
+    # First turn: model calls a workspace tool. Second turn (after seeing the
+    # tool result): model responds with plain text and no further tool call.
+    ai = SimpleNamespace(
+        generate_chat_response=AsyncMock(),
+        generate_tool_call=AsyncMock(
+            side_effect=[
+                _tool_call_result("update_files_for_embedding_model", {}),
+                _final_answer_result("Queued 1 document for re-embedding; 1 already current."),
+            ]
+        ),
+    )
     rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
     documents = SimpleNamespace(list_for_project=AsyncMock(return_value=[]))
     prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
     workspace_tools = SimpleNamespace(
         update_files_for_embedding_model=AsyncMock(
-            return_value=SimpleNamespace(
-                data={
-                    "embedding_config": {
-                        "provider": "gemini",
-                        "model": "text-embedding-004",
-                        "dimensions": 768,
-                    },
-                    "queued_rebuilds": [{"filename": "old.txt"}],
-                    "already_current": [{"filename": "current.txt"}],
-                    "active_jobs": [],
-                    "not_ready": [],
-                    "failed": [],
-                }
+            return_value=ToolResult(
+                tool="update_files_for_embedding_model",
+                status="completed",
+                data={"queued_rebuilds": [{"filename": "old.txt"}], "already_current": [{"filename": "current.txt"}]},
             )
         )
     )
@@ -238,29 +251,39 @@ async def test_workspace_agent_updates_files_via_workspace_tools():
         history=[],
     )
 
-    assert "Queued rebuilds: 1" in answer
-    assert "`old.txt`" in answer
-    assert "`current.txt`" in answer
+    assert answer == "Queued 1 document for re-embedding; 1 already current."
     assert sources == []
     workspace_tools.update_files_for_embedding_model.assert_awaited_once()
+    assert ai.generate_tool_call.await_count == 2
     ai.generate_chat_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_workspace_agent_creates_invoice_workflow_with_real_extraction_steps():
-    ai = SimpleNamespace(generate_chat_response=AsyncMock())
+async def test_workspace_agent_retries_after_invalid_tool_arguments():
+    # First turn: model calls create_workflow missing the required `name`
+    # argument -- Pydantic validation fails and the error is reported back to
+    # the model as a tool result. Second turn: model retries with valid
+    # arguments. Third turn: model gives a final answer.
+    ai = SimpleNamespace(
+        generate_chat_response=AsyncMock(),
+        generate_tool_call=AsyncMock(
+            side_effect=[
+                _tool_call_result("create_workflow", {}),
+                _tool_call_result("create_workflow", {"name": "Extract invoice fields"}),
+                _final_answer_result("Created the workflow `Extract invoice fields`."),
+            ]
+        ),
+    )
     rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
     documents = SimpleNamespace(list_for_project=AsyncMock(return_value=[]))
     prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
     workspace_tools = SimpleNamespace(
         create_workflow=AsyncMock(
-            return_value=SimpleNamespace(data={"id": 12, "name": "Extract invoice fields", "status": "pending"})
-        ),
-        create_workflow_step=AsyncMock(
-            side_effect=[
-                SimpleNamespace(data={"id": 37, "name": "Extract invoice fields", "step_order": 1}),
-                SimpleNamespace(data={"id": 38, "name": "Validate invoice fields", "step_order": 2}),
-            ]
+            return_value=ToolResult(
+                tool="create_workflow",
+                status="completed",
+                data={"id": 12, "name": "Extract invoice fields", "status": "pending"},
+            )
         ),
     )
     agent = SimpleNamespace(system_prompt="Workspace agent", workspace=True)
@@ -280,35 +303,32 @@ async def test_workspace_agent_creates_invoice_workflow_with_real_extraction_ste
         history=[],
     )
 
-    assert "Extract invoice fields" in answer
-    assert workspace_tools.create_workflow_step.await_count == 2
-    first_step = workspace_tools.create_workflow_step.await_args_list[0].kwargs
-    second_step = workspace_tools.create_workflow_step.await_args_list[1].kwargs
-    assert "Do not describe a workflow" in first_step["prompt_template"]
-    assert "{{input}}" in first_step["prompt_template"]
-    assert second_step["depends_on"] == [37]
+    assert answer == "Created the workflow `Extract invoice fields`."
+    workspace_tools.create_workflow.assert_awaited_once_with(
+        workspace_tools.create_workflow.await_args.args[0],
+        project_id=10,
+        name="Extract invoice fields",
+    )
+    assert ai.generate_tool_call.await_count == 3
     ai.generate_chat_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_workspace_agent_requires_document_when_workflow_input_is_ambiguous():
-    ai = SimpleNamespace(generate_chat_response=AsyncMock())
+async def test_workspace_agent_falls_back_to_rag_when_model_calls_no_tool():
+    # If the model never calls a workspace tool on the first turn, the
+    # workspace router defers to the normal RAG/chat path instead of
+    # returning anything itself.
+    ai = SimpleNamespace(
+        generate_chat_response=AsyncMock(return_value="General answer"),
+        generate_tool_call=AsyncMock(return_value=_final_answer_result("not a workspace task")),
+    )
     rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
-    documents = SimpleNamespace(
-        list_for_project=AsyncMock(
-            return_value=[
-                SimpleNamespace(id=1, filename="invoice_january.txt", status=DocumentStatus.INDEXED, text="Invoice January"),
-                SimpleNamespace(id=2, filename="invoice_february.txt", status=DocumentStatus.INDEXED, text="Invoice February"),
-            ]
-        )
+    documents = SimpleNamespace(list_for_project=AsyncMock(return_value=[]))
+    prompts = SimpleNamespace(
+        build_context=Mock(return_value="context"),
+        build_agent_orchestrator_prompt=Mock(return_value="prompt"),
     )
-    prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
-    workspace_tools = SimpleNamespace(
-        list_workflows=AsyncMock(
-            return_value=SimpleNamespace(data={"workflows": [{"id": 12, "name": "Extract invoice fields", "status": "pending"}]})
-        ),
-        run_workflow=AsyncMock(),
-    )
+    workspace_tools = SimpleNamespace()
     agent = SimpleNamespace(system_prompt="Workspace agent", workspace=True)
 
     answer, _ = await AgentService(
@@ -322,107 +342,13 @@ async def test_workspace_agent_requires_document_when_workflow_input_is_ambiguou
         agent=agent,
         project_id=10,
         user_id=7,
-        question="Run workflow Extract invoice fields.",
+        question="What's the capital of France?",
         history=[],
     )
 
-    assert "Which document" in answer
-    workspace_tools.run_workflow.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_workspace_agent_runs_workflow_with_selected_document_text():
-    ai = SimpleNamespace(generate_chat_response=AsyncMock())
-    rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
-    documents = SimpleNamespace(
-        list_for_project=AsyncMock(
-            return_value=[
-                SimpleNamespace(id=1, filename="invoice_january.txt", status=DocumentStatus.INDEXED, text="Invoice Number: INV-1"),
-                SimpleNamespace(id=2, filename="notes.txt", status=DocumentStatus.INDEXED, text="Notes"),
-            ]
-        )
-    )
-    prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
-    workspace_tools = SimpleNamespace(
-        list_workflows=AsyncMock(
-            return_value=SimpleNamespace(data={"workflows": [{"id": 12, "name": "Extract invoice fields", "status": "pending"}]})
-        ),
-        run_workflow=AsyncMock(
-            return_value=SimpleNamespace(data={"run_id": 18, "workflow_id": 12, "task_id": "task-1", "status": "pending"})
-        ),
-    )
-    agent = SimpleNamespace(system_prompt="Workspace agent", workspace=True)
-
-    answer, _ = await AgentService(
-        ai=ai,
-        rag=rag,
-        documents=documents,
-        workspace_tools=workspace_tools,
-        prompts=prompts,
-    ).run(
-        db=AsyncMock(),
-        agent=agent,
-        project_id=10,
-        user_id=7,
-        question="Run workflow Extract invoice fields on invoice_january.txt.",
-        history=[],
-    )
-
-    assert "invoice_january.txt" in answer
-    kwargs = workspace_tools.run_workflow.await_args.kwargs
-    assert kwargs["workflow_id"] == 12
-    assert "Document filename: invoice_january.txt" in kwargs["user_input"]
-    assert "Invoice Number: INV-1" in kwargs["user_input"]
-
-
-@pytest.mark.asyncio
-async def test_workspace_agent_runs_workflow_with_natural_phrasing():
-    # Regression test: "run the workflow ..." (not the literal substring
-    # "run workflow") used to fall through to a plain chat answer instead
-    # of actually executing the workflow.
-    ai = SimpleNamespace(generate_chat_response=AsyncMock())
-    rag = SimpleNamespace(search_project_documents=AsyncMock(), build_sources=Mock(return_value=[]))
-    documents = SimpleNamespace(
-        list_for_project=AsyncMock(
-            return_value=[
-                SimpleNamespace(id=1, filename="meeting_minutes_mock_large.txt", status=DocumentStatus.INDEXED, text="Meeting notes"),
-            ]
-        )
-    )
-    prompts = SimpleNamespace(build_context=Mock(), build_agent_orchestrator_prompt=Mock())
-    workspace_tools = SimpleNamespace(
-        list_workflows=AsyncMock(
-            return_value=SimpleNamespace(
-                data={"workflows": [{"id": 111, "name": "Workspace generated workflow", "status": "pending"}]}
-            )
-        ),
-        run_workflow=AsyncMock(
-            return_value=SimpleNamespace(data={"run_id": 97, "workflow_id": 111, "task_id": "task-2", "status": "pending"})
-        ),
-    )
-    agent = SimpleNamespace(system_prompt="Workspace agent", workspace=True)
-
-    answer, _ = await AgentService(
-        ai=ai,
-        rag=rag,
-        documents=documents,
-        workspace_tools=workspace_tools,
-        prompts=prompts,
-    ).run(
-        db=AsyncMock(),
-        agent=agent,
-        project_id=10,
-        user_id=7,
-        question=(
-            "run the workflow which has only 2 steps (analyzed input and "
-            "analyze output) and use meeting_minutes_mock_large.txt file for it"
-        ),
-        history=[],
-    )
-
-    assert "meeting_minutes_mock_large.txt" in answer
-    workspace_tools.run_workflow.assert_awaited_once()
-    ai.generate_chat_response.assert_not_awaited()
+    assert answer == "General answer"
+    ai.generate_tool_call.assert_awaited_once()
+    ai.generate_chat_response.assert_awaited_once()
 
 
 @pytest.mark.asyncio
