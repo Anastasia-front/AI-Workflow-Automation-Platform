@@ -518,6 +518,10 @@ This guide validates the full workflow execution pipeline:
 - Retry logic
 - Streaming (SSE)
 - Error handling
+<pre>
+* The full retry policy *
+A production-grade retry policy for something like an LLM call in your workflow engine would look like: attempt fails → check if the failure type looks transient → if yes, wait with exponential backoff (+ jitter) → retry, feeding back specific error context if it's a validation failure (Topic 9's self-correction pattern) → repeat up to a max attempt count → if still failing, or if the failure type looked permanent from the start, stop retrying and route to a dead-letter queue for human review, logging the full failure context.
+</pre>
 
 1. Preconditions
 
