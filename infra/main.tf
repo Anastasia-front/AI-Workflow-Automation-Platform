@@ -58,6 +58,8 @@ resource "aws_route53_record" "backend" {
 module "ollama" {
   source = "./modules/ollama"
 
+  count = var.ollama_enabled ? 1 : 0
+
   project_name                = var.project_name
   aws_region                  = var.aws_region
   instance_type               = var.ollama_instance_type
@@ -105,7 +107,7 @@ module "ssm" {
       AWS_S3_BUCKET    = module.s3.bucket_name
       AWS_REGION       = var.aws_region
       GOOGLE_CLIENT_ID = var.google_client_id
-      OLLAMA_BASE_URL  = module.ollama.base_url
+      OLLAMA_BASE_URL  = try(module.ollama[0].base_url, "")
     }
   )
 }

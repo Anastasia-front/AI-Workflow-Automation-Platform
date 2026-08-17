@@ -43,29 +43,29 @@ output "ssm_prefix" {
 }
 
 output "ollama_private_ip" {
-  value = module.ollama.private_ip
+  value = try(module.ollama[0].private_ip, null)
 }
 
 output "ollama_elastic_ip" {
-  value = module.ollama.elastic_ip
+  value = try(module.ollama[0].elastic_ip, null)
 }
 
 output "ollama_elastic_ip_allocation_id" {
-  value = module.ollama.elastic_ip_allocation_id
+  value = try(module.ollama[0].elastic_ip_allocation_id, null)
 }
 
 output "ollama_private_dns_name" {
-  value = module.ollama.private_dns_name
+  value = try(module.ollama[0].private_dns_name, null)
 }
 
 output "ollama_base_url" {
-  value = module.ollama.base_url
+  value = try(module.ollama[0].base_url, null)
 }
 
 output "ollama_security_group_id" {
-  value = module.ollama.security_group_id
+  value = try(module.ollama[0].security_group_id, null)
 }
 
 output "ollama_cloudwatch_log_group" {
-  value = module.ollama.cloudwatch_log_group
+  value = try(module.ollama[0].cloudwatch_log_group, null)
 }

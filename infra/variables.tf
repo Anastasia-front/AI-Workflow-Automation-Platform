@@ -48,6 +48,12 @@ variable "backend_private_dns_record_name" {
   default     = "backend"
 }
 
+variable "ollama_enabled" {
+  description = "Whether to create the Ollama EC2 instance and related resources. Set to false to tear it down without deleting the module config."
+  type        = bool
+  default     = true
+}
+
 variable "ollama_instance_type" {
   #  description = "EC2 GPU instance type used by Ollama."
   type = string
