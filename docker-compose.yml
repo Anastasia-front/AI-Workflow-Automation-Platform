@@ -42,6 +42,12 @@ services:
       - redis
     volumes:
       - ./uploads:/app/uploads
+    # ollama.ai-platform.internal now points at Ollama running on the host
+    # machine's localhost (the remote box it used to point to is down).
+    # host-gateway resolves to the host from inside the container, same
+    # way host.docker.internal does, without needing DNS or a fixed IP.
+    extra_hosts:
+      - "ollama.ai-platform.internal:host-gateway"
 
 volumes:
   postgres_data:
