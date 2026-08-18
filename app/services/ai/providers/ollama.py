@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 
 import httpx
@@ -6,6 +7,30 @@ import httpx
 from app.core import settings
 from app.services.ai.providers.base import AIProvider
 from app.services.ai.tool_types import ChatResult, ToolCall, ToolSchema
+
+logger = logging.getLogger(__name__)
+
+
+def _raise_with_body(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        logger.warning(
+            "ollama_http_error",
+            extra={
+                "url": str(response.request.url),
+                "status_code": response.status_code,
+                "body": response.text[:2000],
+            },
+        )
+        raise
+
+
+async def _raise_with_body_streamed(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+    await response.aread()
+    _raise_with_body(response)
 
 
 class OllamaProvider(AIProvider):
@@ -31,7 +56,7 @@ class OllamaProvider(AIProvider):
                 },
             )
 
-            response.raise_for_status()
+            _raise_with_body(response)
             data = response.json()
 
             return data["message"]["content"]
@@ -52,7 +77,7 @@ class OllamaProvider(AIProvider):
                     "stream": True,
                 },
             ) as response:
-                response.raise_for_status()
+                await _raise_with_body_streamed(response)
                 async for line in response.aiter_lines():
                     if not line:
                         continue
@@ -79,7 +104,7 @@ class OllamaProvider(AIProvider):
                 },
             )
 
-            response.raise_for_status()
+            _raise_with_body(response)
             data = response.json()
 
             return _from_ollama_message(data["message"])
