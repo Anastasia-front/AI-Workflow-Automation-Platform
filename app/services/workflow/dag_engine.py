@@ -11,14 +11,15 @@ from app.repositories import (
     WorkflowStepRepository,
     WorkflowStepRunRepository,
 )
+from app.services.ai import AIService
 from app.services.workflow.ai_executor import AIExecutor
 from app.services.workflow.event_bus import EventBus
 
 
 class DAGEngine:
 
-    def __init__(self, events: EventBus | None = None):
-        self.executor = AIExecutor()
+    def __init__(self, events: EventBus | None = None, ai: AIService | None = None):
+        self.executor = AIExecutor(ai=ai)
         self.events = events or EventBus()
 
         self.runs = WorkflowRunRepository()

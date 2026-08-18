@@ -9,8 +9,8 @@ from app.services.ai import AIService
 
 class AIExecutor:
 
-    def __init__(self):
-        self.ai = AIService()
+    def __init__(self, ai: AIService | None = None):
+        self.ai = ai or AIService()
 
     async def execute(
         self,
