@@ -9,9 +9,11 @@ from app.services.ai.errors import (
     AllProvidersFailedError,
     ProviderError,
     ProviderFailureSummary,
+    ProviderRateLimitError,
     ProviderUnavailableError,
     classify_provider_error,
 )
+from app.services.ai.rate_limiter import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,13 @@ async def run_with_failover(
         for retry in range(settings.PROVIDER_MAX_RETRIES + 1):
             started = time.monotonic()
             try:
+                wait_seconds = await check_rate_limit(attempt.provider)
+                if wait_seconds is not None:
+                    raise ProviderRateLimitError(
+                        "Local rate limit budget exhausted for provider.",
+                        retry_after=wait_seconds,
+                    )
+
                 value = await attempt.call()
                 breaker.success(attempt.provider)
                 logger.info(

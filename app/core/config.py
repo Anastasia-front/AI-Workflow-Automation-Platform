@@ -5,7 +5,7 @@ from app.enums import ChatProvider, EmbeddingProvider
 
 class Settings(BaseSettings):
     DATABASE_URL: str
-    
+
     POSTGRES_USER: str = ""
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     PROVIDER_REQUEST_TIMEOUT_SECONDS: float = 60
     PROVIDER_FAILURE_THRESHOLD: int = 3
     PROVIDER_COOLDOWN_SECONDS: int = 60
+
+    PROVIDER_RATE_LIMIT_ENABLED: bool = False
+    PROVIDER_RATE_LIMIT_RPM: int = 60
 
     WORKSPACE_TOOL_MAX_STEPS: int = 4
     WORKSPACE_TOOL_ARGUMENT_MAX_RETRIES: int = 2
