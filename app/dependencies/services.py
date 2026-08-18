@@ -5,6 +5,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_db, settings
+from app.dependencies.auth import get_current_user
 from app.dependencies.repositories import (
     get_agent_run_repository,
     get_chat_repository,
@@ -17,6 +18,7 @@ from app.dependencies.repositories import (
     get_workflow_run_repository,
     get_workflow_step_repository,
 )
+from app.models import User
 from app.prompts import RAGPromptBuilder
 from app.repositories import (
     AgentRunRepository,
@@ -50,7 +52,7 @@ from app.services import (
     WorkflowUpdateService,
     WorkspaceToolRegistry,
 )
-from app.services.provider_config import provider_config
+from app.services.provider_config import ProviderConfigService
 from app.services.storage import (
     LocalStorageService,
     S3StorageService,
@@ -109,20 +111,34 @@ def get_health_service() -> HealthService:
 
 async def get_embedding_service(
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ) -> EmbeddingService:
-    # Provider choices live in the database and must be refreshed before
+    # Provider choices live in the database, scoped to the requesting user
+    # (falling back to the system default), and must be refreshed before
     # constructing services that route requests to external model providers.
-    await provider_config.load_from_db(db)
-    return EmbeddingService()
+    # A request-scoped ProviderConfigService instance is used (rather than
+    # the shared `provider_config` singleton) so concurrent requests from
+    # different users can't clobber each other's loaded credentials.
+    config = ProviderConfigService()
+    await config.load_from_db(db, user.id)
+    # Chain mode (not a single fixed provider): a user with no personal API
+    # key falls through to the next provider in EMBEDDING_PROVIDER_CHAIN --
+    # normally Ollama, which needs no key -- instead of failing outright.
+    return EmbeddingService(chain=config.embedding_chain())
 
 
 async def get_ai_service(
     db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
 ) -> AIService:
-    # Keep chat/provider failover behavior aligned with the latest persisted
-    # settings for each request-scoped service instance.
-    await provider_config.load_from_db(db)
-    return AIService()
+    # See get_embedding_service: uses a request-scoped ProviderConfigService
+    # instance loaded for this user, not the shared singleton.
+    config = ProviderConfigService()
+    await config.load_from_db(db, user.id)
+    # Chain mode: a user with no personal API key for the default provider
+    # (e.g. Gemini) falls through to the next entry in CHAT_PROVIDER_CHAIN --
+    # normally Ollama, which needs no key -- instead of failing outright.
+    return AIService(chain=config.chat_chain())
 
 
 def get_retrieval_service(
@@ -215,11 +231,13 @@ def get_document_service(
     storage: Annotated[StorageService, Depends(get_storage_service)],
     documents: Annotated[DocumentRepository, Depends(get_document_repository)],
     chunks: Annotated[DocumentChunkRepository, Depends(get_document_chunk_repository)],
+    embeddings: Annotated[EmbeddingService, Depends(get_embedding_service)],
 ) -> DocumentService:
     return DocumentService(
         storage=storage,
         documents=documents,
         chunks=chunks,
+        embeddings=embeddings,
     )
 
 

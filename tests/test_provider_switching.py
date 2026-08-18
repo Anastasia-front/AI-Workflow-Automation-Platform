@@ -17,13 +17,19 @@ async def test_ai_dependency_reloads_provider_config_before_building_service():
     from app.dependencies import services
 
     fake_db = MagicMock()
+    fake_user = MagicMock(id=42)
 
-    with patch.object(services.provider_config, "load_from_db", AsyncMock()) as load, \
+    with patch.object(services, "ProviderConfigService") as config_cls, \
          patch.object(services, "AIService") as ai_service:
-        service = await services.get_ai_service(fake_db)
+        config_instance = config_cls.return_value
+        config_instance.load_from_db = AsyncMock()
+        chain = MagicMock()
+        config_instance.chat_chain.return_value = chain
 
-    load.assert_awaited_once_with(fake_db)
-    ai_service.assert_called_once_with()
+        service = await services.get_ai_service(fake_db, fake_user)
+
+    config_instance.load_from_db.assert_awaited_once_with(fake_db, fake_user.id)
+    ai_service.assert_called_once_with(chain=chain)
     assert service is ai_service.return_value
 
 
@@ -32,13 +38,19 @@ async def test_embedding_dependency_reloads_provider_config_before_building_serv
     from app.dependencies import services
 
     fake_db = MagicMock()
+    fake_user = MagicMock(id=42)
 
-    with patch.object(services.provider_config, "load_from_db", AsyncMock()) as load, \
+    with patch.object(services, "ProviderConfigService") as config_cls, \
          patch.object(services, "EmbeddingService") as embedding_service:
-        service = await services.get_embedding_service(fake_db)
+        config_instance = config_cls.return_value
+        config_instance.load_from_db = AsyncMock()
+        chain = MagicMock()
+        config_instance.embedding_chain.return_value = chain
 
-    load.assert_awaited_once_with(fake_db)
-    embedding_service.assert_called_once_with()
+        service = await services.get_embedding_service(fake_db, fake_user)
+
+    config_instance.load_from_db.assert_awaited_once_with(fake_db, fake_user.id)
+    embedding_service.assert_called_once_with(chain=chain)
     assert service is embedding_service.return_value
 
 

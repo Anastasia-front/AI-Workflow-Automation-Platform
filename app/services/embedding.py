@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import httpx
 from fastapi import HTTPException, status
@@ -12,6 +13,8 @@ from app.services.ai.failover import (
 )
 from app.services.provider_config import provider_config
 
+logger = logging.getLogger(__name__)
+
 
 class EmbeddingService:
     def __init__(
@@ -21,8 +24,13 @@ class EmbeddingService:
         dimensions: int | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        chain: list | None = None,
     ):
-        config = provider_config.embeddings
+        # See AIService for why `chain` exists: pass a caller-resolved
+        # (e.g. per-user) provider chain to avoid falling back to the
+        # shared `provider_config` singleton.
+        self._chain = chain
+        config = chain[0] if chain and provider is None else provider_config.embeddings
         if dimensions is None:
             dimensions = config.dimensions
 
@@ -114,15 +122,20 @@ class EmbeddingService:
 
     async def _embedding_attempts(self, call_factory) -> list[ProviderAttempt]:
         attempts = []
-        for config in provider_config.embedding_chain():
+        skipped = []
+        chain = self._chain if self._chain is not None else provider_config.embedding_chain()
+        for config in chain:
             if not config.model:
+                skipped.append((config.provider.value, "no model configured"))
                 continue
             if config.provider != EmbeddingProvider.OLLAMA and not config.api_key:
+                skipped.append((config.provider.value, "no API key configured"))
                 continue
             if (
                 config.provider == EmbeddingProvider.OLLAMA
                 and not await self._ollama_available(config)
             ):
+                skipped.append((config.provider.value, f"unreachable at {config.base_url}"))
                 continue
             service = EmbeddingService(
                 provider=config.provider,
@@ -138,6 +151,8 @@ class EmbeddingService:
                     call=lambda service=service: call_factory(service),
                 )
             )
+        if not attempts:
+            logger.warning("no_embedding_provider_available", extra={"skipped": skipped})
         return attempts
 
     async def _embed_text_fixed(self, text: str) -> list[float]:
@@ -160,11 +175,18 @@ class EmbeddingService:
         if not config.base_url:
             return False
         try:
-            async with httpx.AsyncClient(timeout=3) as client:
+            # See AIService._ollama_available: a tight timeout here can
+            # falsely exclude a cold/slow (but working) Ollama instance,
+            # silently and with no recorded attempt.
+            async with httpx.AsyncClient(timeout=settings.PROVIDER_REQUEST_TIMEOUT_SECONDS) as client:
                 response = await client.get(f"{config.base_url.rstrip('/')}/api/tags")
                 response.raise_for_status()
                 return True
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "ollama_unavailable",
+                extra={"base_url": config.base_url, "error": str(exc)},
+            )
             return False
 
     async def _embed_ollama(

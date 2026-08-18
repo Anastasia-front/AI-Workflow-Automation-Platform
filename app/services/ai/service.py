@@ -1,8 +1,10 @@
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
 import httpx
 
+from app.core import settings
 from app.enums import ChatProvider
 from app.services.ai.errors import (
     AllProvidersFailedError,
@@ -21,6 +23,8 @@ from app.services.ai.providers import (
 from app.services.ai.tool_types import ChatResult, ToolSchema
 from app.services.provider_config import provider_config
 
+logger = logging.getLogger(__name__)
+
 
 class AIService:
     def __init__(
@@ -30,8 +34,15 @@ class AIService:
         fallback_model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        chain: list | None = None,
     ):
-        config = provider_config.chat
+        # `chain` is an explicit, caller-resolved list of candidate chat
+        # configs (e.g. a specific user's provider chain) to fail over
+        # across. When omitted, falls back to the shared `provider_config`
+        # singleton's chain -- callers that need per-user isolation must
+        # pass `chain` explicitly rather than relying on this default.
+        self._chain = chain
+        config = chain[0] if chain and provider is None else provider_config.chat
 
         self.fixed_provider = provider
         self.provider_name = provider or config.provider
@@ -106,27 +117,43 @@ class AIService:
                 return []
             return [config]
 
-        configs = provider_config.chat_chain(self.fixed_provider)
+        configs = self._chain if self._chain is not None else provider_config.chat_chain(self.fixed_provider)
         available = []
+        skipped = []
         for config in configs:
             if not config.model:
+                skipped.append((config.provider.value, "no model configured"))
                 continue
             if config.provider != ChatProvider.OLLAMA and not config.api_key:
+                skipped.append((config.provider.value, "no API key configured"))
                 continue
             if config.provider == ChatProvider.OLLAMA and not await self._ollama_available(config):
+                skipped.append((config.provider.value, f"unreachable at {config.base_url}"))
                 continue
             available.append(config)
+        if not available:
+            logger.warning("no_chat_provider_available", extra={"skipped": skipped})
         return available
 
     async def _ollama_available(self, config) -> bool:
         if not config.base_url:
             return False
         try:
-            async with httpx.AsyncClient(timeout=3) as client:
+            # Ollama can be slow to answer even /api/tags while it's cold-
+            # loading a model on first use, so this uses the same generous
+            # timeout as an actual provider request rather than a tight
+            # "quick ping" one -- a too-tight timeout here silently drops
+            # Ollama out of the candidate list with no attempt recorded,
+            # which is indistinguishable from it being genuinely down.
+            async with httpx.AsyncClient(timeout=settings.PROVIDER_REQUEST_TIMEOUT_SECONDS) as client:
                 response = await client.get(f"{config.base_url.rstrip('/')}/api/tags")
                 response.raise_for_status()
                 return True
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "ollama_unavailable",
+                extra={"base_url": config.base_url, "error": str(exc)},
+            )
             return False
 
     async def generate_chat_response(

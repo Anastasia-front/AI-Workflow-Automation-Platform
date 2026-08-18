@@ -52,6 +52,8 @@ async def test_each_celery_task_uses_own_session():
 
     with patch.object(tasks_workflows, "CelerySessionLocal", session_ctx), \
          patch.object(tasks_workflows, "WorkflowRunRepository") as repo_cls, \
+         patch.object(tasks_workflows, "_run_owner_user_id", AsyncMock(return_value=None)), \
+         patch.object(tasks_workflows, "resolve_ai_service", AsyncMock(return_value=MagicMock())), \
          patch.object(tasks_workflows, "_build_service") as build_service:
         repo_cls.return_value.claim_pending = AsyncMock(
             side_effect=[
@@ -85,6 +87,8 @@ async def test_workflow_failure_rolls_back_and_persists_with_recovery_session():
 
     with patch.object(tasks_workflows, "CelerySessionLocal", session_ctx), \
          patch.object(tasks_workflows, "WorkflowRunRepository") as repo_cls, \
+         patch.object(tasks_workflows, "_run_owner_user_id", AsyncMock(return_value=None)), \
+         patch.object(tasks_workflows, "resolve_ai_service", AsyncMock(return_value=MagicMock())), \
          patch.object(tasks_workflows, "_build_service") as build_service:
         repo = repo_cls.return_value
         repo.claim_pending = AsyncMock(return_value=run)
@@ -138,8 +142,11 @@ async def test_process_document_task_runs_when_queued():
 
     with patch.object(tasks_documents, "CelerySessionLocal", _fake_session_ctx(fake_db)), \
          patch.object(tasks_documents, "DocumentRepository") as repo_cls, \
+         patch.object(tasks_documents, "ProjectRepository") as project_repo_cls, \
+         patch.object(tasks_documents, "resolve_embedding_service", AsyncMock(return_value=MagicMock())), \
          patch.object(tasks_documents, "DocumentService") as service_cls:
         repo_cls.return_value.get_by_id = AsyncMock(return_value=document)
+        project_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
         service_cls.return_value.process = AsyncMock(return_value=document)
 
         await tasks_documents._process_document(document_id=1)
@@ -156,8 +163,11 @@ async def test_process_document_task_records_error_on_failure():
 
     with patch.object(tasks_documents, "CelerySessionLocal", _fake_session_ctx(fake_db)), \
          patch.object(tasks_documents, "DocumentRepository") as repo_cls, \
+         patch.object(tasks_documents, "ProjectRepository") as project_repo_cls, \
+         patch.object(tasks_documents, "resolve_embedding_service", AsyncMock(return_value=MagicMock())), \
          patch.object(tasks_documents, "DocumentService") as service_cls:
         repo_cls.return_value.get_by_id = AsyncMock(return_value=document)
+        project_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
         repo_cls.return_value.fail_processing = AsyncMock(return_value=document)
         service_cls.return_value.process = AsyncMock(side_effect=RuntimeError("boom"))
 
@@ -202,6 +212,8 @@ async def test_run_workflow_task_executes_when_pending():
 
     with patch.object(tasks_workflows, "CelerySessionLocal", _fake_session_ctx(fake_db)), \
          patch.object(tasks_workflows, "WorkflowRunRepository") as repo_cls, \
+         patch.object(tasks_workflows, "_run_owner_user_id", AsyncMock(return_value=None)), \
+         patch.object(tasks_workflows, "resolve_ai_service", AsyncMock(return_value=MagicMock())), \
          patch.object(tasks_workflows, "_build_service") as build_service:
         repo_cls.return_value.claim_pending = AsyncMock(return_value=run)
         service = MagicMock()

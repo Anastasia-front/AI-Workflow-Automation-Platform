@@ -7,12 +7,11 @@ from app.core.celery_app import celery_app
 from app.core.celery_database import CelerySessionLocal, safe_database_url
 from app.enums import EmbeddingStatus
 from app.repositories import DocumentRepository, ProjectRepository
-from app.services.embedding import EmbeddingService
 from app.services.embedding_management import (
     EmbeddingExecutionCancelled,
     EmbeddingManagementService,
 )
-from app.tasks.provider_config import load_provider_config
+from app.tasks.provider_config import resolve_embedding_service
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,6 @@ async def _rebuild_document_embeddings(
     documents = documents or DocumentRepository()
     async with CelerySessionLocal() as db:
         _log_task_start("embeddings.rebuild_document", task_id, document_id, db)
-        await load_provider_config(db)
         document = await documents.get_by_id(db, document_id)
 
         if document is None:
@@ -74,10 +72,15 @@ async def _rebuild_document_embeddings(
         if document.embedding_status != EmbeddingStatus.QUEUED:
             return
 
+        project = await ProjectRepository().get_by_id(db, document.project_id)
+        embedding_service = await resolve_embedding_service(
+            db, project.user_id if project else None
+        )
+
         document.embedding_status = EmbeddingStatus.PROCESSING
         await db.commit()
 
-        service = EmbeddingManagementService(embedding_service=EmbeddingService())
+        service = EmbeddingManagementService(embedding_service=embedding_service)
 
         try:
             await service.rebuild_document_embeddings(
@@ -137,7 +140,6 @@ async def _sync_project_embeddings(
     projects = projects or ProjectRepository()
     async with CelerySessionLocal() as db:
         _log_task_start("embeddings.sync_project", task_id, project_id, db)
-        await load_provider_config(db)
         project = await projects.get_by_id(db, project_id)
 
         if project is None:
@@ -146,10 +148,12 @@ async def _sync_project_embeddings(
         if project.embedding_sync_status != EmbeddingStatus.QUEUED:
             return
 
+        embedding_service = await resolve_embedding_service(db, project.user_id)
+
         project.embedding_sync_status = EmbeddingStatus.PROCESSING
         await db.commit()
 
-        service = EmbeddingManagementService(embedding_service=EmbeddingService())
+        service = EmbeddingManagementService(embedding_service=embedding_service)
 
         try:
             await service.sync_project_embeddings(

@@ -5,19 +5,32 @@ import os
 from app.core.celery_app import celery_app
 from app.core.celery_database import CelerySessionLocal, safe_database_url
 from app.enums import WorkflowRunStatus
-from app.repositories import WorkflowRunRepository
+from app.repositories import (
+    ProjectRepository,
+    WorkflowRepository,
+    WorkflowRunRepository,
+)
+from app.services.ai import AIService
 from app.services.workflow import DAGEngine, EventBus
 from app.services.workflow.workflow import WorkflowService
-from app.tasks.provider_config import load_provider_config
+from app.tasks.provider_config import resolve_ai_service
 
 logger = logging.getLogger(__name__)
 
 
-def _build_service() -> WorkflowService:
+async def _run_owner_user_id(db, workflow_id: int) -> int | None:
+    workflow = await WorkflowRepository().get_by_id(db, workflow_id)
+    if workflow is None:
+        return None
+    project = await ProjectRepository().get_by_id(db, workflow.project_id)
+    return project.user_id if project else None
+
+
+def _build_service(ai_service: AIService | None = None) -> WorkflowService:
     return WorkflowService(
         runs=WorkflowRunRepository(),
         events=EventBus(),
-        engine=DAGEngine(),
+        engine=DAGEngine(ai=ai_service),
     )
 
 
@@ -37,14 +50,17 @@ def _log_task_start(task_name: str, task_id: str | None, item_id: int, session: 
 async def _run_workflow(run_id: int, task_id: str | None = None) -> None:
     async with CelerySessionLocal() as db:
         _log_task_start("workflows.run", task_id, run_id, db)
-        await load_provider_config(db)
         runs = WorkflowRunRepository()
         workflow_run = await runs.claim_pending(db, run_id)
 
         if workflow_run is None:
             return
 
-        service = _build_service()
+        ai_service = await resolve_ai_service(
+            db, await _run_owner_user_id(db, workflow_run.workflow_id)
+        )
+
+        service = _build_service(ai_service)
         try:
             await service.execute_run(db, workflow_run)
         except Exception:
@@ -64,7 +80,6 @@ async def _run_workflow(run_id: int, task_id: str | None = None) -> None:
 async def _resume_workflow(run_id: int, task_id: str | None = None) -> None:
     async with CelerySessionLocal() as db:
         _log_task_start("workflows.resume", task_id, run_id, db)
-        await load_provider_config(db)
         runs = WorkflowRunRepository()
         workflow_run = await runs.get_by_id(db, run_id)
 
@@ -76,7 +91,11 @@ async def _resume_workflow(run_id: int, task_id: str | None = None) -> None:
             # anything else here means it was already picked up/finished.
             return
 
-        service = _build_service()
+        ai_service = await resolve_ai_service(
+            db, await _run_owner_user_id(db, workflow_run.workflow_id)
+        )
+
+        service = _build_service(ai_service)
         try:
             await service.resume_run(db, workflow_run)
         except Exception:

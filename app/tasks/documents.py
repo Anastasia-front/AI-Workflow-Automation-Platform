@@ -5,9 +5,9 @@ import os
 from app.core.celery_app import celery_app
 from app.core.celery_database import CelerySessionLocal, safe_database_url
 from app.enums import DocumentStatus
-from app.repositories import DocumentRepository
+from app.repositories import DocumentRepository, ProjectRepository
 from app.services import DocumentService
-from app.tasks.provider_config import load_provider_config
+from app.tasks.provider_config import resolve_embedding_service
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ def _log_task_start(task_name: str, task_id: str | None, item_id: int, session: 
 async def _process_document(document_id: int, task_id: str | None = None) -> None:
     async with CelerySessionLocal() as db:
         _log_task_start("documents.process", task_id, document_id, db)
-        await load_provider_config(db)
         documents = DocumentRepository()
         document = await documents.get_by_id(db, document_id)
 
@@ -41,7 +40,11 @@ async def _process_document(document_id: int, task_id: str | None = None) -> Non
         if document.status != DocumentStatus.QUEUED:
             return
 
-        service = DocumentService(documents=documents)
+        project = await ProjectRepository().get_by_id(db, document.project_id)
+        user_id = project.user_id if project else None
+        embeddings = await resolve_embedding_service(db, user_id)
+
+        service = DocumentService(documents=documents, embeddings=embeddings)
 
         try:
             await service.process(db, document)

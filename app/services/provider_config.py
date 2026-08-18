@@ -139,10 +139,22 @@ class ProviderConfigService:
         )
         return ordered
 
-    async def load_from_db(self, db: AsyncSession) -> None:
-        rows = await self.provider_configs.list_all(db)
+    async def load_from_db(self, db: AsyncSession, user_id: int | None = None) -> None:
+        """Load global defaults, then overlay this user's own overrides on top.
+
+        A global default row (user_id IS NULL) only ever supplies the
+        provider/model/base_url/active shape for users who haven't set up
+        their own config -- its stored API key, if any, belongs to no one
+        in particular and must never be handed to a different user. Only a
+        row that actually belongs to `user_id` may contribute its key.
+        """
+        rows = await self.provider_configs.list_all(db, user_id)
+        rows.sort(key=lambda row: row.user_id is not None)
 
         for row in rows:
+            is_own_row = row.user_id == user_id
+            api_key = decrypt_secret(row.encrypted_api_key) if is_own_row else ""
+
             if row.kind == CHAT_KIND:
                 provider = ChatProvider(row.provider)
                 self.chat_configs[provider] = ChatProviderConfigState(
@@ -150,7 +162,7 @@ class ProviderConfigService:
                     model=row.model,
                     fallback_model=row.fallback_model,
                     base_url=row.base_url,
-                    api_key=decrypt_secret(row.encrypted_api_key),
+                    api_key=api_key,
                     active=row.active,
                 )
             elif row.kind == EMBEDDING_KIND:
@@ -160,7 +172,7 @@ class ProviderConfigService:
                     model=row.model,
                     dimensions=row.dimensions or settings.EMBEDDING_DIM,
                     base_url=row.base_url,
-                    api_key=decrypt_secret(row.encrypted_api_key),
+                    api_key=api_key,
                     active=row.active,
                 )
 
@@ -288,6 +300,7 @@ class ProviderConfigService:
         self,
         db: AsyncSession,
         payload: ChatProviderConfigUpdate,
+        user_id: int,
     ) -> ChatProviderConfigResponse:
         provider = payload.provider or self.chat.provider
         config = self.chat_configs[provider]
@@ -304,13 +317,14 @@ class ProviderConfigService:
         for item in self.chat_configs.values():
             item.active = item.provider == provider
 
-        await self._save_all_chat(db)
+        await self._save_all_chat(db, user_id)
         return self.current_config().chat
 
     async def update_embeddings(
         self,
         db: AsyncSession,
         payload: EmbeddingProviderConfigUpdate,
+        user_id: int,
     ) -> EmbeddingProviderConfigResponse:
         provider = payload.provider or self.embeddings.provider
         config = self.embedding_configs[provider]
@@ -331,32 +345,38 @@ class ProviderConfigService:
         for item in self.embedding_configs.values():
             item.active = item.provider == provider
 
-        await self._save_all_embeddings(db)
+        await self._save_all_embeddings(db, user_id)
         return self.current_config().embeddings
 
-    async def synced_list_providers(self, db: AsyncSession) -> ProvidersResponse:
-        await self.load_from_db(db)
+    async def synced_list_providers(
+        self, db: AsyncSession, user_id: int
+    ) -> ProvidersResponse:
+        await self.load_from_db(db, user_id)
         return self.list_providers()
 
-    async def synced_current_config(self, db: AsyncSession) -> ProviderConfigResponse:
-        await self.load_from_db(db)
+    async def synced_current_config(
+        self, db: AsyncSession, user_id: int
+    ) -> ProviderConfigResponse:
+        await self.load_from_db(db, user_id)
         return self.current_config()
 
     async def synced_update_chat(
         self,
         db: AsyncSession,
         payload: ChatProviderConfigUpdate,
+        user_id: int,
     ) -> ChatProviderConfigResponse:
-        await self.load_from_db(db)
-        return await self.update_chat(db, payload)
+        await self.load_from_db(db, user_id)
+        return await self.update_chat(db, payload, user_id)
 
     async def synced_update_embeddings(
         self,
         db: AsyncSession,
         payload: EmbeddingProviderConfigUpdate,
+        user_id: int,
     ) -> EmbeddingProviderConfigResponse:
-        await self.load_from_db(db)
-        return await self.update_embeddings(db, payload)
+        await self.load_from_db(db, user_id)
+        return await self.update_embeddings(db, payload, user_id)
 
     async def check_chat_health(
         self,
@@ -364,10 +384,11 @@ class ProviderConfigService:
         *,
         provider: ChatProvider,
         model: str | None = None,
+        user_id: int | None = None,
     ) -> ProviderHealthResponse:
         from app.services.ai import AIService
 
-        await self.load_from_db(db)
+        await self.load_from_db(db, user_id)
         config = self.chat_configs[provider]
         model_name = model or config.model
         service = AIService(
@@ -411,10 +432,11 @@ class ProviderConfigService:
         provider: EmbeddingProvider,
         model: str | None = None,
         dimensions: int | None = None,
+        user_id: int | None = None,
     ) -> ProviderHealthResponse:
         from app.services.embedding import EmbeddingService
 
-        await self.load_from_db(db)
+        await self.load_from_db(db, user_id)
         config = self.embedding_configs[provider]
         model_name = model or config.model
 
@@ -447,11 +469,11 @@ class ProviderConfigService:
             latency_ms=self._elapsed_ms(started),
         )
 
-    async def _save_all_chat(self, db: AsyncSession) -> None:
+    async def _save_all_chat(self, db: AsyncSession, user_id: int) -> None:
         for config in self.chat_configs.values():
-            row = await self._get_row(db, CHAT_KIND, config.provider.value)
+            row = await self._get_row(db, CHAT_KIND, config.provider.value, user_id)
             if not row:
-                await self.provider_configs.add(db, self._chat_row(config))
+                await self.provider_configs.add(db, self._chat_row(config, user_id))
             else:
                 row.model = config.model
                 row.fallback_model = config.fallback_model
@@ -462,11 +484,11 @@ class ProviderConfigService:
 
         await self.provider_configs.commit(db)
 
-    async def _save_all_embeddings(self, db: AsyncSession) -> None:
+    async def _save_all_embeddings(self, db: AsyncSession, user_id: int) -> None:
         for config in self.embedding_configs.values():
-            row = await self._get_row(db, EMBEDDING_KIND, config.provider.value)
+            row = await self._get_row(db, EMBEDDING_KIND, config.provider.value, user_id)
             if not row:
-                await self.provider_configs.add(db, self._embedding_row(config))
+                await self.provider_configs.add(db, self._embedding_row(config, user_id))
             else:
                 row.model = config.model
                 row.fallback_model = None
@@ -482,11 +504,17 @@ class ProviderConfigService:
         db: AsyncSession,
         kind: str,
         provider: str,
+        user_id: int | None = None,
     ) -> ProviderConfig | None:
-        return await self.provider_configs.get(db, kind, provider)
+        """Write-target lookup: the exact row for (kind, provider, user_id),
+        with no fallback to another user's or the global row."""
+        return await self.provider_configs.get_own(db, kind, provider, user_id)
 
-    def _chat_row(self, config: ChatProviderConfigState) -> ProviderConfig:
+    def _chat_row(
+        self, config: ChatProviderConfigState, user_id: int | None = None
+    ) -> ProviderConfig:
         return ProviderConfig(
+            user_id=user_id,
             kind=CHAT_KIND,
             provider=config.provider.value,
             model=config.model,
@@ -497,8 +525,11 @@ class ProviderConfigService:
             dimensions=None,
         )
 
-    def _embedding_row(self, config: EmbeddingProviderConfigState) -> ProviderConfig:
+    def _embedding_row(
+        self, config: EmbeddingProviderConfigState, user_id: int | None = None
+    ) -> ProviderConfig:
         return ProviderConfig(
+            user_id=user_id,
             kind=EMBEDDING_KIND,
             provider=config.provider.value,
             model=config.model,
